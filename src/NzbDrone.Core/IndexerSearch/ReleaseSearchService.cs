@@ -96,7 +96,7 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var key = EpisodeCacheKey(episodeId);
 
-            if (FindCachedEntry(key) == null)
+            if (FindCachedEntry(key, interactiveSearch) == null)
             {
                 return null;
             }
@@ -110,7 +110,7 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var key = SeasonCacheKey(seriesId, seasonNumber);
 
-            if (FindCachedEntry(key) == null)
+            if (FindCachedEntry(key, interactiveSearch) == null)
             {
                 return null;
             }
@@ -122,14 +122,17 @@ namespace NzbDrone.Core.IndexerSearch
 
         private static string SeasonCacheKey(int seriesId, int seasonNumber) => $"season:{seriesId}:{seasonNumber}";
 
-        private CachedSearch FindCachedEntry(string key)
+        private CachedSearch FindCachedEntry(string key, bool interactiveSearch)
         {
-            return _configService.SearchResultCacheLifetime > 0 ? _searchResultCache.Find(key) : null;
+            var entry = _configService.SearchResultCacheLifetime > 0 ? _searchResultCache.Find(key) : null;
+
+            // An interactive search shows every result, so it is not served by a search that skipped slow indexers
+            return entry?.Partial == true && interactiveSearch ? null : entry;
         }
 
         private CachedSearchResult FindCachedSearch(string key, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
         {
-            var entry = FindCachedEntry(key);
+            var entry = FindCachedEntry(key, interactiveSearch);
 
             if (entry == null || !episodes.All(e => entry.EpisodeIds.Contains(e.Id)))
             {
@@ -744,7 +747,11 @@ namespace NzbDrone.Core.IndexerSearch
                 delayCancellation.Cancel();
             }
 
-            _currentSearch.Value?.Searches.Add((criteriaBase, allReports));
+            if (_currentSearch.Value != null)
+            {
+                _currentSearch.Value.Searches.Add((criteriaBase, allReports));
+                _currentSearch.Value.Partial |= pending.Any();
+            }
 
             if (pending.Any())
             {
@@ -800,6 +807,7 @@ namespace NzbDrone.Core.IndexerSearch
         {
             public DateTime SearchedAt { get; } = DateTime.UtcNow;
             public HashSet<int> EpisodeIds { get; set; }
+            public bool Partial { get; set; }
             public List<(SearchCriteriaBase Criteria, List<ReleaseInfo> Reports)> Searches { get; } = new ();
         }
     }
