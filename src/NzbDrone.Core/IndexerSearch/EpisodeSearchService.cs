@@ -111,12 +111,12 @@ namespace NzbDrone.Core.IndexerSearch
         {
             foreach (var episodeId in message.EpisodeIds)
             {
-                if (message.UseCachedReleases && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
+                if (message.FallbackToIndexers && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
                 {
                     continue;
                 }
 
-                var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false, !message.UseCachedReleases).GetAwaiter().GetResult();
+                var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false, !message.FallbackToIndexers).GetAwaiter().GetResult();
                 var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);

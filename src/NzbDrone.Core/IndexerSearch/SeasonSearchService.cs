@@ -22,13 +22,13 @@ namespace NzbDrone.Core.IndexerSearch
 
         public void Execute(SeasonSearchCommand message)
         {
-            if (message.UseCachedReleases &&
+            if (message.FallbackToIndexers &&
                 EpisodeSearchService.GrabCachedRelease(() => _releaseSearchService.CachedSeasonSearch(message.SeriesId, message.SeasonNumber, false), _processDownloadDecisions, _logger, $"season {message.SeasonNumber} of [{message.SeriesId}]"))
             {
                 return;
             }
 
-            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, message.Trigger == CommandTrigger.Manual, false, !message.UseCachedReleases).GetAwaiter().GetResult();
+            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, message.Trigger == CommandTrigger.Manual, false, !message.FallbackToIndexers).GetAwaiter().GetResult();
             var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
             _logger.ProgressInfo("Season search completed. {0} reports downloaded.", processed.Grabbed.Count);

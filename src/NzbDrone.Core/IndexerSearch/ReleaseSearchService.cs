@@ -133,6 +133,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var series = _seriesService.GetSeries(seriesId);
             var decisions = new List<DownloadDecision>();
+            var releaseCount = 0;
 
             // Decisions are made again on the original search criteria with the current series and episodes,
             // so the blocklist, queue and files apply as they are now while the episode matching of the search stays the same.
@@ -146,13 +147,27 @@ namespace NzbDrone.Core.IndexerSearch
                 criteria.UserInvokedSearch = userInvokedSearch;
                 criteria.InteractiveSearch = interactiveSearch;
 
-                if (criteria.Episodes.Any())
+                if (criteria.Episodes.Empty())
                 {
-                    decisions.AddRange(_makeDownloadDecision.GetSearchDecision(search.Reports, criteria));
+                    continue;
                 }
+
+                var indexerIds = GetIndexers(criteria).Select(i => i.Definition.Id).ToHashSet();
+
+                // Interactive search shows everything its indexers return, so it is only served by a search that got an answer from all of them
+                if (interactiveSearch && !indexerIds.IsSubsetOf(search.IndexerIds))
+                {
+                    _logger.Debug("Cached search results for {0} are missing results of some indexers, searching indexers", criteria);
+                    return null;
+                }
+
+                var releases = search.Reports.Where(r => indexerIds.Contains(r.IndexerId)).ToList();
+                releaseCount += releases.Count;
+
+                decisions.AddRange(_makeDownloadDecision.GetSearchDecision(releases, criteria));
             }
 
-            _logger.ProgressInfo("Using search results for {0} from {1:0} minutes ago", series.Title, (DateTime.UtcNow - entry.SearchedAt).TotalMinutes);
+            _logger.ProgressInfo("Using {0} search results for {1} cached at {2}", releaseCount, series.Title, entry.SearchedAt.ToLocalTime());
 
             return new CachedSearchResult(DeDupeDecisions(decisions), entry.SearchedAt);
         }
@@ -636,14 +651,19 @@ namespace NzbDrone.Core.IndexerSearch
             return spec;
         }
 
-        private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
+        private List<IIndexer> GetIndexers(SearchCriteriaBase criteriaBase)
         {
             var indexers = criteriaBase.InteractiveSearch ?
                 _indexerFactory.InteractiveSearchEnabled() :
                 _indexerFactory.AutomaticSearchEnabled();
 
             // Filter indexers to untagged indexers and indexers with intersecting tags
-            indexers = indexers.Where(i => i.Definition.Tags.Empty() || i.Definition.Tags.Intersect(criteriaBase.Series.Tags).Any()).ToList();
+            return indexers.Where(i => i.Definition.Tags.Empty() || i.Definition.Tags.Intersect(criteriaBase.Series.Tags).Any()).ToList();
+        }
+
+        private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
+        {
+            var indexers = GetIndexers(criteriaBase);
 
             _logger.ProgressInfo("Searching indexers for {0}. {1} active indexers", criteriaBase, indexers.Count);
 
@@ -655,7 +675,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 
-            _currentSearch.Value?.Searches.Add((criteriaBase, reports));
+            _currentSearch.Value?.Searches.Add((criteriaBase, reports, indexers.Select(i => i.Definition.Id).ToHashSet()));
 
             // Update the last search time for all episodes if at least 1 indexer was searched.
             if (indexers.Any())
@@ -696,7 +716,9 @@ namespace NzbDrone.Core.IndexerSearch
         {
             public DateTime SearchedAt { get; } = DateTime.UtcNow;
             public HashSet<int> EpisodeIds { get; set; }
-            public List<(SearchCriteriaBase Criteria, List<ReleaseInfo> Reports)> Searches { get; } = new ();
+
+            // IndexerIds are the indexers that answered, a search returned early lacks the ones still pending
+            public List<(SearchCriteriaBase Criteria, List<ReleaseInfo> Reports, HashSet<int> IndexerIds)> Searches { get; } = new ();
         }
     }
 }

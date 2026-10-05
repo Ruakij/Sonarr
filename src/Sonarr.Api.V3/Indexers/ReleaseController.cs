@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -192,7 +191,7 @@ namespace Sonarr.Api.V3.Indexers
             {
                 var cached = refresh ? null : _releaseSearchService.CachedEpisodeSearch(episodeId, true);
 
-                if (cached != null && cached.Decisions.Any())
+                if (cached != null)
                 {
                     return MapCachedDecisions(cached);
                 }
@@ -219,7 +218,7 @@ namespace Sonarr.Api.V3.Indexers
             {
                 var cached = refresh ? null : _releaseSearchService.CachedSeasonSearch(seriesId, seasonNumber, true);
 
-                if (cached != null && cached.Decisions.Any())
+                if (cached != null)
                 {
                     return MapCachedDecisions(cached);
                 }
