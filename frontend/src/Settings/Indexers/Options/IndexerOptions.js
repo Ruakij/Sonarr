@@ -130,6 +130,22 @@ function IndexerOptions(props) {
               advancedSettings={advancedSettings}
               isAdvanced={true}
             >
+              <FormLabel>{translate('EpisodeSearchConcurrency')}</FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.NUMBER}
+                name="episodeSearchConcurrency"
+                min={1}
+                helpText={translate('EpisodeSearchConcurrencyHelpText')}
+                onChange={onInputChange}
+                {...settings.episodeSearchConcurrency}
+              />
+            </FormGroup>
+
+            <FormGroup
+              advancedSettings={advancedSettings}
+              isAdvanced={true}
+            >
               <FormLabel>{translate('RssSyncInterval')}</FormLabel>
 
               <FormInputGroup
