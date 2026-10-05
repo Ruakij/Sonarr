@@ -152,6 +152,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("AutoRedownloadFailedFromInteractiveSearch", value); }
         }
 
+        public int ManualImportTimeout
+        {
+            get { return GetValueInt("ManualImportTimeout", -1); }
+
+            set { SetValue("ManualImportTimeout", value); }
+        }
+
         public bool CreateEmptySeriesFolders
         {
             get { return GetValueBoolean("CreateEmptySeriesFolders", false); }
