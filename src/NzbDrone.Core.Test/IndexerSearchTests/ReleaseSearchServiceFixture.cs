@@ -895,5 +895,23 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, false).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast");
         }
+
+        [Test]
+        public async Task should_not_serve_early_returned_search_to_interactive_search()
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+
+            GivenEarlySearchReturn(0);
+            GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
+
+            await SearchTitles();
+
+            Mocker.GetMock<IEpisodeService>()
+                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
+                  .Returns(_xemEpisodes.First());
+
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
+        }
     }
 }
