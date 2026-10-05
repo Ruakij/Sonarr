@@ -11,12 +11,16 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
 
@@ -699,7 +703,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                 .Returns<List<ReleaseInfo>, SearchCriteriaBase, bool>((reports, criteria, reportProgress) => Decide(reports, criteria));
         }
 
-        // Score is carried in Size, titles starting with "Rejected" are rejected and titles starting with "Episode" cover only the first searched episode
+        // Releases with a Size of at least 10 meet the cutoff, titles starting with "Rejected" are rejected and titles starting with "Episode" cover only the first searched episode
         private static List<DownloadDecision> Decide(List<ReleaseInfo> reports, SearchCriteriaBase criteria)
         {
             return reports.Select(r =>
@@ -707,7 +711,9 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                 var remoteEpisode = new RemoteEpisode
                 {
                     Release = r,
-                    CustomFormatScore = (int)r.Size,
+                    Series = criteria.Series,
+                    ParsedEpisodeInfo = new ParsedEpisodeInfo { Quality = new QualityModel(r.Size >= 10 ? Quality.HDTV720p : Quality.SDTV) },
+                    CustomFormats = new List<CustomFormat>(),
                     Episodes = r.Title.StartsWith("Episode") ? criteria.Episodes.Take(1).ToList() : criteria.Episodes.ToList()
                 };
 
@@ -724,12 +730,16 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             return new List<ReleaseInfo> { release };
         }
 
-        private void GivenEarlySearchReturn(int minimumWait, int scoreThreshold, int timeout)
+        private void GivenEarlySearchReturn(int minimumWait)
         {
             Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturn).Returns(true);
             Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnMinimumWait).Returns(minimumWait);
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnCustomFormatScore).Returns(scoreThreshold);
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnTimeout).Returns(timeout);
+
+            _xemSeries.QualityProfile = new QualityProfile();
+
+            Mocker.GetMock<IUpgradableSpecification>()
+                  .Setup(s => s.CutoffNotMet(It.IsAny<QualityProfile>(), It.IsAny<QualityModel>(), It.IsAny<List<CustomFormat>>(), null))
+                  .Returns<QualityProfile, QualityModel, List<CustomFormat>, QualityModel>((profile, quality, formats, newQuality) => quality.Quality != Quality.HDTV720p);
         }
 
         private void GivenSeasonEpisodes()
@@ -762,7 +772,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_return_early_when_good_release_found()
         {
-            GivenEarlySearchReturn(0, 10, 60);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
 
             var stopwatch = Stopwatch.StartNew();
@@ -775,7 +785,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_wait_for_minimum_wait_before_returning_early()
         {
-            GivenEarlySearchReturn(2, 10, 60);
+            GivenEarlySearchReturn(2);
             GivenIndexers((0, "Fast", 10), (200, "Medium", 0), (Timeout.Infinite, "Slow", 100));
 
             var stopwatch = Stopwatch.StartNew();
@@ -789,7 +799,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_wait_for_slow_indexer_when_no_good_release_found()
         {
-            GivenEarlySearchReturn(0, 10, 60);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Fast", 5), (0, "Rejected", 100), (500, "Slow", 20));
 
             var titles = await SearchTitles();
@@ -798,28 +808,25 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public async Task should_return_at_timeout_without_good_release()
+        public async Task should_wait_for_slow_indexer_when_cutoff_not_met()
         {
-            GivenEarlySearchReturn(0, 10, 1);
-            GivenIndexers((0, "Fast", 5), (Timeout.Infinite, "Slow", 20));
+            GivenEarlySearchReturn(0);
+            GivenIndexers((0, "Fast", 5), (500, "Slow", 20));
 
-            var stopwatch = Stopwatch.StartNew();
             var titles = await SearchTitles();
 
-            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(0.5));
-            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
-            titles.Should().BeEquivalentTo("Fast");
+            titles.Should().BeEquivalentTo("Fast", "Slow");
         }
 
         [Test]
-        public async Task should_keep_results_of_answered_indexers_once_timeout_passed()
+        public async Task should_keep_results_of_answered_indexers_once_minimum_wait_passed()
         {
-            GivenEarlySearchReturn(0, 10, 0);
-            GivenIndexers((0, "Fast", 5), (Timeout.Infinite, "Slow", 20));
+            GivenEarlySearchReturn(0);
+            GivenIndexers((0, "Fast", 10), (0, "Other", 5), (Timeout.Infinite, "Slow", 20));
 
             var titles = await SearchTitles();
 
-            titles.Should().BeEquivalentTo("Fast");
+            titles.Should().BeEquivalentTo("Fast", "Other");
         }
 
         [Test]
@@ -835,7 +842,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_wait_for_all_indexers_for_interactive_search()
         {
-            GivenEarlySearchReturn(0, 10, 0);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Fast", 100), (500, "Slow", 20));
 
             var titles = await SearchTitles(true);
@@ -846,7 +853,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_return_season_search_early_when_good_season_pack_found()
         {
-            GivenEarlySearchReturn(0, 10, 60);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Pack", 10), (Timeout.Infinite, "Slow", 100));
 
             var stopwatch = Stopwatch.StartNew();
@@ -859,7 +866,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_not_return_season_search_early_for_single_episode_release()
         {
-            GivenEarlySearchReturn(0, 10, 60);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Episode", 100), (500, "Slow", 20));
 
             var titles = await SeasonSearchTitles();
@@ -873,7 +880,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
             Mocker.GetMock<IConfigService>().SetupGet(s => s.AutoRedownloadFailedCacheLifetime).Returns(60);
 
-            GivenEarlySearchReturn(0, 10, 60);
+            GivenEarlySearchReturn(0);
             GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
 
             await SearchTitles();
