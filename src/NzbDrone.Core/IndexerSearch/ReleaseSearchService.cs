@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Exceptions;
@@ -32,6 +35,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IMakeDownloadDecision _makeDownloadDecision;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -39,6 +43,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 ISeriesService seriesService,
                                 IEpisodeService episodeService,
                                 IMakeDownloadDecision makeDownloadDecision,
+                                IConfigService configService,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -46,6 +51,7 @@ namespace NzbDrone.Core.IndexerSearch
             _seriesService = seriesService;
             _episodeService = episodeService;
             _makeDownloadDecision = makeDownloadDecision;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -522,13 +528,24 @@ namespace NzbDrone.Core.IndexerSearch
 
             _logger.ProgressInfo("Searching indexers for {0}. {1} active indexers", criteriaBase, indexers.Count);
 
-            var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase));
+            var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
 
-            var batch = await Task.WhenAll(tasks);
+            List<DownloadDecision> decisions;
 
-            var reports = batch.SelectMany(x => x).ToList();
+            if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
+            {
+                decisions = await CollectDecisionsWithEarlyReturn(tasks, criteriaBase);
+            }
+            else
+            {
+                var batch = await Task.WhenAll(tasks);
 
-            _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
+                var reports = batch.SelectMany(x => x).ToList();
+
+                _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
+
+                decisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase);
+            }
 
             // Update the last search time for all episodes if at least 1 indexer was searched.
             if (indexers.Any())
@@ -540,7 +557,79 @@ namespace NzbDrone.Core.IndexerSearch
                 _episodeService.UpdateLastSearchTime(criteriaBase.Episodes);
             }
 
-            return _makeDownloadDecision.GetSearchDecision(reports, criteriaBase).ToList();
+            return decisions;
+        }
+
+        private async Task<List<DownloadDecision>> CollectDecisionsWithEarlyReturn(List<Task<IList<ReleaseInfo>>> tasks, SearchCriteriaBase criteriaBase)
+        {
+            var minimumWait = TimeSpan.FromSeconds(_configService.EarlySearchReturnMinimumWait);
+            var timeout = TimeSpan.FromSeconds(_configService.EarlySearchReturnTimeout);
+            var scoreThreshold = _configService.EarlySearchReturnCustomFormatScore;
+            var searchedEpisodeIds = criteriaBase.Episodes.Select(e => e.Id).ToList();
+
+            var decisions = new List<DownloadDecision>();
+            var pending = new List<Task>(tasks);
+            var reportCount = 0;
+            var foundGoodRelease = false;
+            var stopwatch = Stopwatch.StartNew();
+
+            using var delayCancellation = new CancellationTokenSource();
+
+            try
+            {
+                while (pending.Any())
+                {
+                    var remaining = (foundGoodRelease ? minimumWait : timeout) - stopwatch.Elapsed;
+
+                    // Past the deadline, indexers that already answered are still read, only those still running are dropped
+                    var completed = remaining > TimeSpan.Zero
+                        ? await Task.WhenAny(pending.Append(Task.Delay(remaining, delayCancellation.Token)))
+                        : pending.FirstOrDefault(t => t.IsCompleted);
+
+                    if (completed == null)
+                    {
+                        break;
+                    }
+
+                    if (!pending.Remove(completed))
+                    {
+                        continue;
+                    }
+
+                    // Decisions are made per release, so deciding on each indexer's results as they arrive matches deciding on all of them at once
+                    var reports = (await (Task<IList<ReleaseInfo>>)completed).ToList();
+                    var batchDecisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase, false);
+
+                    reportCount += reports.Count;
+
+                    decisions.AddRange(batchDecisions);
+
+                    // Only a release covering every searched episode ends the search, a single episode must not end a season search
+                    foundGoodRelease = foundGoodRelease || batchDecisions.Any(d => d.Approved &&
+                                                                                   d.RemoteEpisode.CustomFormatScore >= scoreThreshold &&
+                                                                                   searchedEpisodeIds.All(id => d.RemoteEpisode.Episodes.Any(e => e.Id == id)));
+                }
+            }
+            finally
+            {
+                delayCancellation.Cancel();
+            }
+
+            if (pending.Any())
+            {
+                _logger.ProgressInfo("Returning early for {0} after {1:0.#}s, ignoring results of {2} pending indexers", criteriaBase, stopwatch.Elapsed.TotalSeconds, pending.Count);
+            }
+
+            if (reportCount > 0)
+            {
+                _logger.ProgressInfo("Processed {0} releases for {1} from {2} indexers", reportCount, criteriaBase, tasks.Count - pending.Count);
+            }
+            else
+            {
+                _logger.ProgressInfo("No results found");
+            }
+
+            return decisions;
         }
 
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
