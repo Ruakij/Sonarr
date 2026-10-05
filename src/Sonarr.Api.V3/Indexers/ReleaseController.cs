@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -170,26 +171,33 @@ namespace Sonarr.Api.V3.Indexers
 
         [HttpGet]
         [Produces("application/json")]
-        public async Task<List<ReleaseResource>> GetReleases(int? seriesId, int? episodeId, int? seasonNumber)
+        public async Task<List<ReleaseResource>> GetReleases(int? seriesId, int? episodeId, int? seasonNumber, bool refresh = false)
         {
             if (episodeId.HasValue)
             {
-                return await GetEpisodeReleases(episodeId.Value);
+                return await GetEpisodeReleases(episodeId.Value, refresh);
             }
 
             if (seriesId.HasValue && seasonNumber.HasValue)
             {
-                return await GetSeasonReleases(seriesId.Value, seasonNumber.Value);
+                return await GetSeasonReleases(seriesId.Value, seasonNumber.Value, refresh);
             }
 
             return await GetRss();
         }
 
-        private async Task<List<ReleaseResource>> GetEpisodeReleases(int episodeId)
+        private async Task<List<ReleaseResource>> GetEpisodeReleases(int episodeId, bool refresh)
         {
             try
             {
-                var decisions = await _releaseSearchService.EpisodeSearch(episodeId, true, true);
+                var cached = refresh ? null : _releaseSearchService.CachedEpisodeSearch(episodeId, true);
+
+                if (cached != null && cached.Decisions.Any())
+                {
+                    return MapCachedDecisions(cached);
+                }
+
+                var decisions = await _releaseSearchService.EpisodeSearch(episodeId, true, true, false);
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
                 return MapDecisions(prioritizedDecisions);
@@ -205,11 +213,18 @@ namespace Sonarr.Api.V3.Indexers
             }
         }
 
-        private async Task<List<ReleaseResource>> GetSeasonReleases(int seriesId, int seasonNumber)
+        private async Task<List<ReleaseResource>> GetSeasonReleases(int seriesId, int seasonNumber, bool refresh)
         {
             try
             {
-                var decisions = await _releaseSearchService.SeasonSearch(seriesId, seasonNumber, false, false, true, true);
+                var cached = refresh ? null : _releaseSearchService.CachedSeasonSearch(seriesId, seasonNumber, true);
+
+                if (cached != null && cached.Decisions.Any())
+                {
+                    return MapCachedDecisions(cached);
+                }
+
+                var decisions = await _releaseSearchService.SeasonSearch(seriesId, seasonNumber, false, false, true, true, false);
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
                 return MapDecisions(prioritizedDecisions);
@@ -232,6 +247,15 @@ namespace Sonarr.Api.V3.Indexers
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
             return MapDecisions(prioritizedDecisions);
+        }
+
+        private List<ReleaseResource> MapCachedDecisions(CachedSearchResult cached)
+        {
+            var resources = MapDecisions(_prioritizeDownloadDecision.PrioritizeDecisions(cached.Decisions));
+
+            resources.ForEach(r => r.CachedAt = cached.SearchedAt);
+
+            return resources;
         }
 
         protected override ReleaseResource MapDecision(DownloadDecision decision, int initialWeight)

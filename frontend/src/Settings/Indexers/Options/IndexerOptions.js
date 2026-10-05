@@ -79,6 +79,20 @@ function IndexerOptions(props) {
               />
             </FormGroup>
 
+            <FormGroup>
+              <FormLabel>{translate('SearchResultCacheLifetime')}</FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.NUMBER}
+                name="searchResultCacheLifetime"
+                min={0}
+                unit="minutes"
+                helpText={translate('SearchResultCacheLifetimeHelpText')}
+                onChange={onInputChange}
+                {...settings.searchResultCacheLifetime}
+              />
+            </FormGroup>
+
             <FormGroup
               advancedSettings={advancedSettings}
               isAdvanced={true}

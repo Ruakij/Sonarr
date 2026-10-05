@@ -111,25 +111,25 @@ namespace NzbDrone.Core.IndexerSearch
         {
             foreach (var episodeId in message.EpisodeIds)
             {
-                if (message.UseCachedReleases && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
+                if (message.UseCachedReleases && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
                 {
                     continue;
                 }
 
-                var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false).GetAwaiter().GetResult();
+                var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false, !message.UseCachedReleases).GetAwaiter().GetResult();
                 var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
             }
         }
 
-        internal static bool GrabCachedRelease(Func<List<DownloadDecision>> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item)
+        internal static bool GrabCachedRelease(Func<CachedSearchResult> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item)
         {
             try
             {
-                var decisions = cachedSearch();
+                var decisions = cachedSearch()?.Decisions;
 
-                if (decisions.Empty())
+                if (decisions == null || decisions.Empty())
                 {
                     return false;
                 }

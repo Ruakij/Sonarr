@@ -22,7 +22,6 @@ namespace NzbDrone.Core.Configuration
         bool EnableCompletedDownloadHandling { get; set; }
         bool AutoRedownloadFailed { get; set; }
         bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
-        int AutoRedownloadFailedCacheLifetime { get; set; }
 
         // Media Management
         bool AutoUnmonitorPreviouslyDownloadedEpisodes { get; set; }
@@ -52,6 +51,7 @@ namespace NzbDrone.Core.Configuration
         int Retention { get; set; }
         int RssSyncInterval { get; set; }
         int MaximumSize { get; set; }
+        int SearchResultCacheLifetime { get; set; }
         int MinimumAge { get; set; }
 
         ListSyncLevelType ListSyncLevel { get; set; }
