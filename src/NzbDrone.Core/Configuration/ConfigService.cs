@@ -117,6 +117,34 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("MaximumSize", value); }
         }
 
+        public bool EarlySearchReturn
+        {
+            get { return GetValueBoolean("EarlySearchReturn", false); }
+
+            set { SetValue("EarlySearchReturn", value); }
+        }
+
+        public int EarlySearchReturnMinimumWait
+        {
+            get { return GetValueInt("EarlySearchReturnMinimumWait", 10); }
+
+            set { SetValue("EarlySearchReturnMinimumWait", value); }
+        }
+
+        public int EarlySearchReturnCustomFormatScore
+        {
+            get { return GetValueInt("EarlySearchReturnCustomFormatScore", 0); }
+
+            set { SetValue("EarlySearchReturnCustomFormatScore", value); }
+        }
+
+        public int EarlySearchReturnTimeout
+        {
+            get { return GetValueInt("EarlySearchReturnTimeout", 60); }
+
+            set { SetValue("EarlySearchReturnTimeout", value); }
+        }
+
         public int MinimumAge
         {
             get { return GetValueInt("MinimumAge", 0); }
