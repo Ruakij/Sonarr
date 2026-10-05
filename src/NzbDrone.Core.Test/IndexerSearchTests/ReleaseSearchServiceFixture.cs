@@ -1,17 +1,21 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
 
@@ -22,6 +26,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         private Mock<IIndexer> _mockIndexer;
         private Series _xemSeries;
         private List<Episode> _xemEpisodes;
+        private TaskCompletionSource<IList<ReleaseInfo>> _neverAnswers;
 
         [SetUp]
         public void SetUp()
@@ -60,6 +65,14 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Mocker.GetMock<ISceneMappingService>()
                   .Setup(s => s.GetSceneNames(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<List<int>>()))
                   .Returns(new List<string>());
+
+            _neverAnswers = new TaskCompletionSource<IList<ReleaseInfo>>();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            _neverAnswers.TrySetResult(new List<ReleaseInfo>());
         }
 
         private void WithEpisode(int seasonNumber, int episodeNumber, int? sceneSeasonNumber, int? sceneEpisodeNumber, string airDate = null)
@@ -649,6 +662,208 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             allCriteria.Last().Should().BeOfType<SingleEpisodeSearchCriteria>();
             allCriteria.Last().As<SingleEpisodeSearchCriteria>().SeasonNumber.Should().Be(2);
             allCriteria.Last().As<SingleEpisodeSearchCriteria>().EpisodeNumber.Should().Be(3);
+        }
+
+        private void GivenIndexers(params (int DelayMs, string Title, int Score)[] indexers)
+        {
+            var result = indexers.Select((indexer, i) =>
+            {
+                var mock = new Mock<IIndexer>();
+                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1 });
+
+                Func<Task<IList<ReleaseInfo>>> fetch = () => indexer.DelayMs == Timeout.Infinite
+                    ? _neverAnswers.Task
+                    : FetchDelayed(indexer.DelayMs, new ReleaseInfo { Title = indexer.Title, Guid = indexer.Title, Size = indexer.Score });
+
+                mock.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).Returns(fetch);
+                mock.Setup(s => s.Fetch(It.IsAny<SeasonSearchCriteria>())).Returns(fetch);
+
+                return mock.Object;
+            }).ToList();
+
+            Mocker.GetMock<IIndexerFactory>()
+                  .Setup(s => s.AutomaticSearchEnabled(true))
+                  .Returns(result);
+
+            Mocker.GetMock<IIndexerFactory>()
+                  .Setup(s => s.InteractiveSearchEnabled(true))
+                  .Returns(result);
+
+            Mocker.GetMock<IMakeDownloadDecision>()
+                .Setup(s => s.GetSearchDecision(It.IsAny<List<ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>()))
+                .Returns<List<ReleaseInfo>, SearchCriteriaBase>(Decide);
+
+            Mocker.GetMock<IMakeDownloadDecision>()
+                .Setup(s => s.GetSearchDecision(It.IsAny<List<ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>(), It.IsAny<bool>()))
+                .Returns<List<ReleaseInfo>, SearchCriteriaBase, bool>((reports, criteria, reportProgress) => Decide(reports, criteria));
+        }
+
+        // Score is carried in Size, titles starting with "Rejected" are rejected and titles starting with "Episode" cover only the first searched episode
+        private static List<DownloadDecision> Decide(List<ReleaseInfo> reports, SearchCriteriaBase criteria)
+        {
+            return reports.Select(r =>
+            {
+                var remoteEpisode = new RemoteEpisode
+                {
+                    Release = r,
+                    CustomFormatScore = (int)r.Size,
+                    Episodes = r.Title.StartsWith("Episode") ? criteria.Episodes.Take(1).ToList() : criteria.Episodes.ToList()
+                };
+
+                return r.Title.StartsWith("Rejected")
+                    ? new DownloadDecision(remoteEpisode, new DownloadRejection(DownloadRejectionReason.Unknown, "Rejected"))
+                    : new DownloadDecision(remoteEpisode);
+            }).ToList();
+        }
+
+        private static async Task<IList<ReleaseInfo>> FetchDelayed(int delayMs, ReleaseInfo release)
+        {
+            await Task.Delay(delayMs);
+
+            return new List<ReleaseInfo> { release };
+        }
+
+        private void GivenEarlySearchReturn(int minimumWait, int scoreThreshold, int timeout)
+        {
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturn).Returns(true);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnMinimumWait).Returns(minimumWait);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnCustomFormatScore).Returns(scoreThreshold);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnTimeout).Returns(timeout);
+        }
+
+        private void GivenSeasonEpisodes()
+        {
+            WithEpisode(7, 1, null, null);
+            WithEpisode(7, 2, null, null);
+
+            _xemEpisodes[0].Id = 1;
+            _xemEpisodes[1].Id = 2;
+        }
+
+        private async Task<List<string>> SearchTitles(bool interactiveSearch = false)
+        {
+            GivenSeasonEpisodes();
+
+            var decisions = await Subject.EpisodeSearch(_xemEpisodes.First(), true, interactiveSearch);
+
+            return decisions.Select(d => d.RemoteEpisode.Release.Title).ToList();
+        }
+
+        private async Task<List<string>> SeasonSearchTitles()
+        {
+            GivenSeasonEpisodes();
+
+            var decisions = await Subject.SeasonSearch(_xemSeries.Id, 7, false, true, true, false);
+
+            return decisions.Select(d => d.RemoteEpisode.Release.Title).ToList();
+        }
+
+        [Test]
+        public async Task should_return_early_when_good_release_found()
+        {
+            GivenEarlySearchReturn(0, 10, 60);
+            GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Fast");
+        }
+
+        [Test]
+        public async Task should_wait_for_minimum_wait_before_returning_early()
+        {
+            GivenEarlySearchReturn(2, 10, 60);
+            GivenIndexers((0, "Fast", 10), (200, "Medium", 0), (Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(1.5));
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Fast", "Medium");
+        }
+
+        [Test]
+        public async Task should_wait_for_slow_indexer_when_no_good_release_found()
+        {
+            GivenEarlySearchReturn(0, 10, 60);
+            GivenIndexers((0, "Fast", 5), (0, "Rejected", 100), (500, "Slow", 20));
+
+            var titles = await SearchTitles();
+
+            titles.Should().BeEquivalentTo("Fast", "Rejected", "Slow");
+        }
+
+        [Test]
+        public async Task should_return_at_timeout_without_good_release()
+        {
+            GivenEarlySearchReturn(0, 10, 1);
+            GivenIndexers((0, "Fast", 5), (Timeout.Infinite, "Slow", 20));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(0.5));
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Fast");
+        }
+
+        [Test]
+        public async Task should_keep_results_of_answered_indexers_once_timeout_passed()
+        {
+            GivenEarlySearchReturn(0, 10, 0);
+            GivenIndexers((0, "Fast", 5), (Timeout.Infinite, "Slow", 20));
+
+            var titles = await SearchTitles();
+
+            titles.Should().BeEquivalentTo("Fast");
+        }
+
+        [Test]
+        public async Task should_wait_for_all_indexers_when_early_search_return_disabled()
+        {
+            GivenIndexers((0, "Fast", 100), (500, "Slow", 20));
+
+            var titles = await SearchTitles();
+
+            titles.Should().BeEquivalentTo("Fast", "Slow");
+        }
+
+        [Test]
+        public async Task should_wait_for_all_indexers_for_interactive_search()
+        {
+            GivenEarlySearchReturn(0, 10, 0);
+            GivenIndexers((0, "Fast", 100), (500, "Slow", 20));
+
+            var titles = await SearchTitles(true);
+
+            titles.Should().BeEquivalentTo("Fast", "Slow");
+        }
+
+        [Test]
+        public async Task should_return_season_search_early_when_good_season_pack_found()
+        {
+            GivenEarlySearchReturn(0, 10, 60);
+            GivenIndexers((0, "Pack", 10), (Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SeasonSearchTitles();
+
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Pack");
+        }
+
+        [Test]
+        public async Task should_not_return_season_search_early_for_single_episode_release()
+        {
+            GivenEarlySearchReturn(0, 10, 60);
+            GivenIndexers((0, "Episode", 100), (500, "Slow", 20));
+
+            var titles = await SeasonSearchTitles();
+
+            titles.Should().BeEquivalentTo("Episode", "Slow");
         }
     }
 }
