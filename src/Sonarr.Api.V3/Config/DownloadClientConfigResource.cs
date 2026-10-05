@@ -11,6 +11,7 @@ namespace Sonarr.Api.V3.Config
         public int MinimumTitleSimilarity { get; set; }
         public bool AutoRedownloadFailed { get; set; }
         public bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
+        public int? ManualImportTimeout { get; set; }
     }
 
     public static class DownloadClientConfigResourceMapper
@@ -24,7 +25,8 @@ namespace Sonarr.Api.V3.Config
                 EnableCompletedDownloadHandling = model.EnableCompletedDownloadHandling,
                 MinimumTitleSimilarity = model.MinimumTitleSimilarity,
                 AutoRedownloadFailed = model.AutoRedownloadFailed,
-                AutoRedownloadFailedFromInteractiveSearch = model.AutoRedownloadFailedFromInteractiveSearch
+                AutoRedownloadFailedFromInteractiveSearch = model.AutoRedownloadFailedFromInteractiveSearch,
+                ManualImportTimeout = model.ManualImportTimeout < 0 ? null : model.ManualImportTimeout
             };
         }
     }

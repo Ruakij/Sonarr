@@ -1139,6 +1139,8 @@
   "ManualGrab": "Manual Grab",
   "ManualImport": "Manual Import",
   "ManualImportItemsLoadError": "Unable to load manual import items",
+  "ManualImportTimeout": "Manual Import Timeout",
+  "ManualImportTimeoutHelpText": "Mark downloads as failed when they have been waiting for manual import longer than this, 0 fails them immediately. Downloads with some episodes already imported are never failed. Leave empty to disable",
   "MappedNetworkDrivesWindowsService": "Mapped network drives are not available when running as a Windows Service, see the [FAQ]({url}) for more information.",
   "Mapping": "Mapping",
   "MarkAsFailed": "Mark as Failed",
