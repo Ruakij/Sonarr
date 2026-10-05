@@ -79,6 +79,64 @@ function IndexerOptions(props) {
               />
             </FormGroup>
 
+            <FormGroup>
+              <FormLabel>{translate('EarlySearchReturn')}</FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name="earlySearchReturn"
+                helpText={translate('EarlySearchReturnHelpText')}
+                onChange={onInputChange}
+                {...settings.earlySearchReturn}
+              />
+            </FormGroup>
+
+            {
+              settings.earlySearchReturn.value ?
+                <>
+                  <FormGroup>
+                    <FormLabel>{translate('EarlySearchReturnMinimumWait')}</FormLabel>
+
+                    <FormInputGroup
+                      type={inputTypes.NUMBER}
+                      name="earlySearchReturnMinimumWait"
+                      min={0}
+                      unit="seconds"
+                      helpText={translate('EarlySearchReturnMinimumWaitHelpText')}
+                      onChange={onInputChange}
+                      {...settings.earlySearchReturnMinimumWait}
+                    />
+                  </FormGroup>
+
+                  <FormGroup>
+                    <FormLabel>{translate('EarlySearchReturnCustomFormatScore')}</FormLabel>
+
+                    <FormInputGroup
+                      type={inputTypes.NUMBER}
+                      name="earlySearchReturnCustomFormatScore"
+                      helpText={translate('EarlySearchReturnCustomFormatScoreHelpText')}
+                      onChange={onInputChange}
+                      {...settings.earlySearchReturnCustomFormatScore}
+                    />
+                  </FormGroup>
+
+                  <FormGroup>
+                    <FormLabel>{translate('EarlySearchReturnTimeout')}</FormLabel>
+
+                    <FormInputGroup
+                      type={inputTypes.NUMBER}
+                      name="earlySearchReturnTimeout"
+                      min={1}
+                      unit="seconds"
+                      helpText={translate('EarlySearchReturnTimeoutHelpText')}
+                      onChange={onInputChange}
+                      {...settings.earlySearchReturnTimeout}
+                    />
+                  </FormGroup>
+                </> :
+                null
+            }
+
             <FormGroup
               advancedSettings={advancedSettings}
               isAdvanced={true}

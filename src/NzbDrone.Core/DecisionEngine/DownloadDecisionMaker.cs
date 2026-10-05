@@ -19,6 +19,7 @@ namespace NzbDrone.Core.DecisionEngine
     {
         List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false);
         List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase);
+        List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase, bool reportProgress);
     }
 
     public class DownloadDecisionMaker : IMakeDownloadDecision
@@ -52,12 +53,21 @@ namespace NzbDrone.Core.DecisionEngine
 
         public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase)
         {
-            return GetDecisions(reports, false, searchCriteriaBase).ToList();
+            return GetSearchDecision(reports, searchCriteriaBase, true);
         }
 
-        private IEnumerable<DownloadDecision> GetDecisions(List<ReleaseInfo> reports, bool pushedRelease, SearchCriteriaBase searchCriteria = null)
+        public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase, bool reportProgress)
         {
-            if (reports.Any())
+            return GetDecisions(reports, false, searchCriteriaBase, reportProgress).ToList();
+        }
+
+        private IEnumerable<DownloadDecision> GetDecisions(List<ReleaseInfo> reports, bool pushedRelease, SearchCriteriaBase searchCriteria = null, bool reportProgress = true)
+        {
+            if (!reportProgress)
+            {
+                _logger.Debug("Processing {0} releases", reports.Count);
+            }
+            else if (reports.Any())
             {
                 _logger.ProgressInfo("Processing {0} releases", reports.Count);
             }
