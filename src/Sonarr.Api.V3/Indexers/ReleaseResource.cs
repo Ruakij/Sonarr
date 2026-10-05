@@ -92,6 +92,10 @@ namespace Sonarr.Api.V3.Indexers
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool? ShouldOverride { get; set; }
+
+        // Time of the search the release was found in, set when interactive search results come from the search result cache
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public DateTime? CachedAt { get; set; }
     }
 
     public static class ReleaseResourceMapper

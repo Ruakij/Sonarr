@@ -91,28 +91,6 @@ function DownloadClientOptions(props) {
                     </FormGroup> :
                     null
                 }
-
-                {
-                  settings.autoRedownloadFailed.value ?
-                    <FormGroup
-                      advancedSettings={advancedSettings}
-                      isAdvanced={true}
-                      size={sizes.MEDIUM}
-                    >
-                      <FormLabel>{translate('AutoRedownloadFailedCacheLifetime')}</FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.NUMBER}
-                        name="autoRedownloadFailedCacheLifetime"
-                        min={0}
-                        unit="minutes"
-                        helpText={translate('AutoRedownloadFailedCacheLifetimeHelpText')}
-                        onChange={onInputChange}
-                        {...settings.autoRedownloadFailedCacheLifetime}
-                      />
-                    </FormGroup> :
-                    null
-                }
               </Form>
 
               <Alert kind={kinds.INFO}>

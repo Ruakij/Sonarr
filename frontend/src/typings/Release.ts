@@ -44,6 +44,7 @@ interface Release {
   episodeRequested: boolean;
   downloadAllowed: boolean;
   isDaily: boolean;
+  cachedAt?: string;
 
   isGrabbing?: boolean;
   isGrabbed?: boolean;
