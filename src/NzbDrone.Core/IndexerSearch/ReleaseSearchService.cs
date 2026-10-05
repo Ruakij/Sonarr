@@ -4,8 +4,10 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Exceptions;
@@ -23,6 +25,8 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> EpisodeSearch(Episode episode, bool userInvokedSearch, bool interactiveSearch);
         Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, bool missingOnly, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch);
         Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch);
+        List<DownloadDecision> CachedEpisodeSearch(int episodeId);
+        List<DownloadDecision> CachedSeasonSearch(int seriesId, int seasonNumber);
     }
 
     public class ReleaseSearchService : ISearchForReleases
@@ -32,6 +36,8 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IMakeDownloadDecision _makeDownloadDecision;
+        private readonly IConfigService _configService;
+        private readonly ICached<List<ReleaseInfo>> _approvedReleasesCache;
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -39,6 +45,8 @@ namespace NzbDrone.Core.IndexerSearch
                                 ISeriesService seriesService,
                                 IEpisodeService episodeService,
                                 IMakeDownloadDecision makeDownloadDecision,
+                                IConfigService configService,
+                                ICacheManager cacheManager,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -46,6 +54,8 @@ namespace NzbDrone.Core.IndexerSearch
             _seriesService = seriesService;
             _episodeService = episodeService;
             _makeDownloadDecision = makeDownloadDecision;
+            _configService = configService;
+            _approvedReleasesCache = cacheManager.GetCache<List<ReleaseInfo>>(GetType(), "approvedReleases");
             _logger = logger;
         }
 
@@ -57,6 +67,95 @@ namespace NzbDrone.Core.IndexerSearch
         }
 
         public async Task<List<DownloadDecision>> EpisodeSearch(Episode episode, bool userInvokedSearch, bool interactiveSearch)
+        {
+            var decisions = await SearchEpisode(episode, userInvokedSearch, interactiveSearch);
+
+            if (!interactiveSearch)
+            {
+                CacheApprovedReleases(EpisodeCacheKey(episode.Id), decisions);
+            }
+
+            return decisions;
+        }
+
+        public async Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
+        {
+            var decisions = await SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch);
+
+            if (!interactiveSearch)
+            {
+                CacheApprovedReleases(SeasonCacheKey(seriesId, seasonNumber), decisions);
+            }
+
+            return decisions;
+        }
+
+        public List<DownloadDecision> CachedEpisodeSearch(int episodeId)
+        {
+            var releases = FindCachedReleases(EpisodeCacheKey(episodeId));
+
+            if (releases.Empty())
+            {
+                return new List<DownloadDecision>();
+            }
+
+            var episode = _episodeService.GetEpisode(episodeId);
+
+            return ReevaluateCachedReleases(releases, episode.SeriesId, new List<Episode> { episode }, false);
+        }
+
+        public List<DownloadDecision> CachedSeasonSearch(int seriesId, int seasonNumber)
+        {
+            var releases = FindCachedReleases(SeasonCacheKey(seriesId, seasonNumber));
+
+            if (releases.Empty())
+            {
+                return new List<DownloadDecision>();
+            }
+
+            return ReevaluateCachedReleases(releases, seriesId, _episodeService.GetEpisodesBySeason(seriesId, seasonNumber), true);
+        }
+
+        private static string EpisodeCacheKey(int episodeId) => $"episode:{episodeId}";
+
+        private static string SeasonCacheKey(int seriesId, int seasonNumber) => $"season:{seriesId}:{seasonNumber}";
+
+        private List<ReleaseInfo> FindCachedReleases(string key)
+        {
+            return (_configService.AutoRedownloadFailedCacheLifetime > 0 ? _approvedReleasesCache.Find(key) : null) ?? new List<ReleaseInfo>();
+        }
+
+        private List<DownloadDecision> ReevaluateCachedReleases(List<ReleaseInfo> releases, int seriesId, List<Episode> episodes, bool monitoredOnly)
+        {
+            // Re-evaluate against the current series, episodes, blocklist and queue, since all of them may have changed since the search.
+            // The search specific matching (season and episode numbers) already passed during the search and does not change.
+            var searchSpec = Get<CachedReleasesSearchCriteria>(_seriesService.GetSeries(seriesId), episodes, monitoredOnly, false, false);
+
+            _logger.Debug("Re-evaluating {0} cached releases for {1}", releases.Count, searchSpec);
+
+            return _makeDownloadDecision.GetSearchDecision(releases, searchSpec);
+        }
+
+        private void CacheApprovedReleases(string key, List<DownloadDecision> decisions)
+        {
+            var lifetime = _configService.AutoRedownloadFailedCacheLifetime;
+
+            if (lifetime <= 0)
+            {
+                _approvedReleasesCache.Clear();
+                return;
+            }
+
+            // Cached<T> only evicts expired entries on lookup, so drop them here to keep the cache bounded
+            _approvedReleasesCache.ClearExpired();
+
+            // Temporarily rejected releases are held by a delay profile, the re-evaluation applies the delay again
+            var approvedReleases = decisions.Where(d => d.Approved || d.TemporarilyRejected).Select(d => d.RemoteEpisode.Release).ToList();
+
+            _approvedReleasesCache.Set(key, approvedReleases, TimeSpan.FromMinutes(lifetime));
+        }
+
+        private async Task<List<DownloadDecision>> SearchEpisode(Episode episode, bool userInvokedSearch, bool interactiveSearch)
         {
             var series = _seriesService.GetSeries(episode.SeriesId);
 
@@ -105,7 +204,7 @@ namespace NzbDrone.Core.IndexerSearch
             return await SeasonSearch(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch);
         }
 
-        public async Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
+        private async Task<List<DownloadDecision>> SearchSeason(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
         {
             var series = _seriesService.GetSeries(seriesId);
 

@@ -152,6 +152,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("AutoRedownloadFailedFromInteractiveSearch", value); }
         }
 
+        public int AutoRedownloadFailedCacheLifetime
+        {
+            get { return GetValueInt("AutoRedownloadFailedCacheLifetime", 0); }
+
+            set { SetValue("AutoRedownloadFailedCacheLifetime", value); }
+        }
+
         public bool CreateEmptySeriesFolders
         {
             get { return GetValueBoolean("CreateEmptySeriesFolders", false); }
