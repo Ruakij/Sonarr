@@ -1,0 +1,90 @@
+name: Fork image
+
+on:
+  push:
+    tags: ['*.*.*-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag against upstream version
+        id: version
+        run: |
+          base="${GITHUB_REF_NAME%%-*}"
+          declared="$(grep -oP '^  VERSION: \K\S+' .github/workflows/build.yml)"
+          if [ "$base" != "$declared" ]; then
+            echo "::error::tag base $base does not match VERSION $declared in build.yml"
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.1
+          cache: yarn
+
+      - name: Build
+        env:
+          SONARR_VERSION: ${{ steps.version.outputs.base }}.${{ github.run_number }}
+          BRANCH: main
+        run: |
+          for rid in linux-musl-x64 linux-musl-arm64; do
+            ./build.sh --backend --frontend --packages -f net6.0 -r "$rid"
+            rm -rf "_artifacts/$rid/net6.0/Sonarr/Sonarr.Update"
+          done
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build amd64 image for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: _artifacts
+          file: .github/docker/Dockerfile
+          platforms: linux/amd64
+          build-args: BASE_VERSION=${{ steps.version.outputs.base }}
+          load: true
+          tags: fork-image-smoke
+
+      - name: Smoke test
+        run: |
+          docker run -d --name smoke -p 8989:8989 fork-image-smoke
+          for _ in $(seq 90); do
+            if curl -fs localhost:8989/ping; then
+              docker rm -f smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::/ping did not answer within 90s"
+          docker logs smoke
+          exit 1
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: _artifacts
+          file: .github/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: BASE_VERSION=${{ steps.version.outputs.base }}
+          push: true
+          tags: |
+            ghcr.io/ruakij/sonarr:${{ github.ref_name }}
+            ghcr.io/ruakij/sonarr:latest
