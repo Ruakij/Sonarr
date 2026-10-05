@@ -9,6 +9,7 @@ using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
@@ -864,6 +865,24 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var titles = await SeasonSearchTitles();
 
             titles.Should().BeEquivalentTo("Episode", "Slow");
+        }
+
+        [Test]
+        public async Task should_cache_releases_of_early_returned_search()
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.AutoRedownloadFailedCacheLifetime).Returns(60);
+
+            GivenEarlySearchReturn(0, 10, 60);
+            GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
+
+            await SearchTitles();
+
+            Mocker.GetMock<IEpisodeService>()
+                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
+                  .Returns(_xemEpisodes.First());
+
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast");
         }
     }
 }
