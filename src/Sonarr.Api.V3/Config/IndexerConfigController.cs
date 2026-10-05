@@ -22,6 +22,9 @@ namespace Sonarr.Api.V3.Config
 
             SharedValidator.RuleFor(c => c.EarlySearchReturnMinimumWait)
                            .GreaterThanOrEqualTo(0);
+
+            SharedValidator.RuleFor(c => c.SearchResultCacheLifetime)
+                           .GreaterThanOrEqualTo(0);
         }
 
         protected override IndexerConfigResource ToResource(IConfigService model)

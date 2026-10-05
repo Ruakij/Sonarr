@@ -6133,6 +6133,14 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -9479,6 +9487,10 @@
           "earlySearchReturnMinimumWait": {
             "type": "integer",
             "format": "int32"
+          },
+          "searchResultCacheLifetime": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false
@@ -11436,6 +11448,11 @@
           },
           "shouldOverride": {
             "type": "boolean",
+            "nullable": true
+          },
+          "cachedAt": {
+            "type": "string",
+            "format": "date-time",
             "nullable": true
           }
         },

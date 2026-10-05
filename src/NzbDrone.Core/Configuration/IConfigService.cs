@@ -23,7 +23,6 @@ namespace NzbDrone.Core.Configuration
         int MinimumTitleSimilarity { get; set; }
         bool AutoRedownloadFailed { get; set; }
         bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
-        int AutoRedownloadFailedCacheLifetime { get; set; }
         int ManualImportTimeout { get; set; }
 
         // Media Management
@@ -56,6 +55,7 @@ namespace NzbDrone.Core.Configuration
         int MaximumSize { get; set; }
         bool EarlySearchReturn { get; set; }
         int EarlySearchReturnMinimumWait { get; set; }
+        int SearchResultCacheLifetime { get; set; }
         int MinimumAge { get; set; }
 
         ListSyncLevelType ListSyncLevel { get; set; }

@@ -55,7 +55,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Mocker.SetConstant<IProcessDownloadDecisions>(Mocker.Resolve<ProcessDownloadDecisions>());
 
             Mocker.GetMock<IConfigService>()
-                  .SetupGet(s => s.AutoRedownloadFailedCacheLifetime)
+                  .SetupGet(s => s.SearchResultCacheLifetime)
                   .Returns(10);
 
             Mocker.GetMock<ISeriesService>()
@@ -138,9 +138,9 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             _indexer.Verify(v => v.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()), Times.Exactly(count));
         }
 
-        private ICached<List<ReleaseInfo>> GetCache()
+        private ICached<ReleaseSearchService.CachedSearch> GetCache()
         {
-            return Mocker.Resolve<ICacheManager>().GetCache<List<ReleaseInfo>>(typeof(ReleaseSearchService), "approvedReleases");
+            return Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedSearch>(typeof(ReleaseSearchService), "searchResults");
         }
 
         [Test]
@@ -198,7 +198,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         public void should_search_when_cache_is_disabled()
         {
             Mocker.GetMock<IConfigService>()
-                  .SetupGet(s => s.AutoRedownloadFailedCacheLifetime)
+                  .SetupGet(s => s.SearchResultCacheLifetime)
                   .Returns(0);
 
             SearchAndFail("guid1");
@@ -254,7 +254,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public void should_clear_expired_cache_entries_when_caching()
         {
-            GetCache().Set("episode:99", _releases.ToList(), TimeSpan.FromMilliseconds(-1));
+            GetCache().Set("episode:99", new ReleaseSearchService.CachedSearch(), TimeSpan.FromMilliseconds(-1));
 
             SearchAndFail("guid1");
 
@@ -269,7 +269,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             GetCache().Count.Should().Be(1);
 
             Mocker.GetMock<IConfigService>()
-                  .SetupGet(s => s.AutoRedownloadFailedCacheLifetime)
+                  .SetupGet(s => s.SearchResultCacheLifetime)
                   .Returns(0);
 
             Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
@@ -278,13 +278,38 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public void should_not_use_cached_releases_for_regular_search()
+        public void should_use_cached_results_for_automatic_search()
         {
             SearchAndFail("guid1");
 
             Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
 
+            VerifyGrabbed("guid2");
+            VerifySearchCount(1);
+        }
+
+        [Test]
+        public void should_search_again_when_cache_is_bypassed()
+        {
+            SearchAndFail("guid1");
+
+            Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, false, false).GetAwaiter().GetResult();
+
             VerifySearchCount(2);
+        }
+
+        [Test]
+        public void should_serve_cached_results_to_interactive_search_with_search_time()
+        {
+            SearchAndFail("guid1");
+
+            var cached = Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, true);
+
+            cached.Should().NotBeNull();
+            cached.Decisions.Should().HaveCount(3);
+            cached.Decisions.Single(d => d.RemoteEpisode.Release.Guid == "guid1").Approved.Should().BeFalse();
+            cached.SearchedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+            VerifySearchCount(1);
         }
 
         [Test]

@@ -25,6 +25,11 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         public List<string> AllSceneTitles => SceneTitles.Concat(CleanSceneTitles).Distinct().ToList();
         public List<string> CleanSceneTitles => SceneTitles.Select(GetCleanSceneTitle).Distinct().ToList();
 
+        public SearchCriteriaBase Clone()
+        {
+            return (SearchCriteriaBase)MemberwiseClone();
+        }
+
         public static string GetCleanSceneTitle(string title)
         {
             Ensure.That(title, () => title).IsNotNullOrWhiteSpace();
