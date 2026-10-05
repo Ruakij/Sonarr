@@ -15,6 +15,7 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
@@ -326,6 +327,18 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             cached.Decisions.Single(d => d.RemoteEpisode.Release.Guid == "guid1").Approved.Should().BeFalse();
             cached.SearchedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
             VerifySearchCount(1);
+        }
+
+        [Test]
+        public void should_search_indexers_and_refresh_cache_for_manual_search()
+        {
+            SearchAndFail("guid1");
+            _releases.Add(new ReleaseInfo { IndexerId = 1, Guid = "guid4", Title = "Series.S01E01.Release4", DownloadProtocol = DownloadProtocol.Usenet });
+
+            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }) { Trigger = CommandTrigger.Manual });
+
+            VerifySearchCount(2);
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().Contain("guid4");
         }
 
         [Test]

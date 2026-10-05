@@ -28,7 +28,10 @@ namespace NzbDrone.Core.IndexerSearch
                 return;
             }
 
-            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, message.Trigger == CommandTrigger.Manual, false, !message.FallbackToIndexers).GetAwaiter().GetResult();
+            var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
+
+            // Searches started by hand query the indexers, their results still refresh the cache
+            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, userInvokedSearch, false, !message.FallbackToIndexers && !userInvokedSearch).GetAwaiter().GetResult();
             var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
             _logger.ProgressInfo("Season search completed. {0} reports downloaded.", processed.Grabbed.Count);
