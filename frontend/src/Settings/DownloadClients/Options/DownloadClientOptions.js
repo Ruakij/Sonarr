@@ -91,6 +91,24 @@ function DownloadClientOptions(props) {
                     </FormGroup> :
                     null
                 }
+
+                <FormGroup
+                  advancedSettings={advancedSettings}
+                  isAdvanced={true}
+                  size={sizes.MEDIUM}
+                >
+                  <FormLabel>{translate('ManualImportTimeout')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.NUMBER}
+                    name="manualImportTimeout"
+                    min={0}
+                    unit="minutes"
+                    helpText={translate('ManualImportTimeoutHelpText')}
+                    onChange={onInputChange}
+                    {...settings.manualImportTimeout}
+                  />
+                </FormGroup>
               </Form>
 
               <Alert kind={kinds.INFO}>

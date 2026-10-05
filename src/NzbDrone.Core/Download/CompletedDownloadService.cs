@@ -26,6 +26,13 @@ namespace NzbDrone.Core.Download
 
     public class CompletedDownloadService : ICompletedDownloadService
     {
+        private static readonly HashSet<ImportRejectionReason> TransientRejectionReasons = new HashSet<ImportRejectionReason>
+        {
+            ImportRejectionReason.Unpacking,
+            ImportRejectionReason.FileLocked,
+            ImportRejectionReason.MinimumFreeSpace
+        };
+
         private readonly IEventAggregator _eventAggregator;
         private readonly IHistoryService _historyService;
         private readonly IProvideImportItemService _provideImportItemService;
@@ -127,6 +134,8 @@ namespace NzbDrone.Core.Download
 
         public void Import(TrackedDownload trackedDownload)
         {
+            trackedDownload.ImportRejectedPermanently = false;
+
             SetImportItem(trackedDownload);
 
             if (!ValidatePath(trackedDownload))
@@ -156,6 +165,9 @@ namespace NzbDrone.Core.Download
             }
 
             trackedDownload.State = TrackedDownloadState.ImportPending;
+
+            var rejections = importResults.SelectMany(r => r.ImportDecision.Rejections).ToList();
+            trackedDownload.ImportRejectedPermanently = rejections.Any() && !rejections.Any(r => TransientRejectionReasons.Contains(r.Reason));
 
             if (importResults.Empty())
             {
@@ -193,7 +205,7 @@ namespace NzbDrone.Core.Download
             if (statusMessages.Any())
             {
                 trackedDownload.Warn(statusMessages.ToArray());
-                SetStateToImportBlocked(trackedDownload);
+                SetStateToImportBlocked(trackedDownload, trackedDownload.ImportRejectedPermanently);
             }
         }
 
@@ -270,9 +282,11 @@ namespace NzbDrone.Core.Download
             return false;
         }
 
-        private void SetStateToImportBlocked(TrackedDownload trackedDownload)
+        // Blocks without an import attempt (unmatched series, unparsable download) only resolve by manual interaction
+        private void SetStateToImportBlocked(TrackedDownload trackedDownload, bool rejectedPermanently = true)
         {
             trackedDownload.State = TrackedDownloadState.ImportBlocked;
+            trackedDownload.ImportRejectedPermanently = rejectedPermanently;
 
             if (!trackedDownload.HasNotifiedManualInteractionRequired)
             {

@@ -105,7 +105,7 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            var failure = "Failed download detected";
+            var failure = trackedDownload.FailMessage ?? "Failed download detected";
 
             if (trackedDownload.DownloadItem.IsEncrypted)
             {
