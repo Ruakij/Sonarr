@@ -4,6 +4,7 @@ import ClientSideCollectionAppState from 'App/State/ClientSideCollectionAppState
 import ReleasesAppState from 'App/State/ReleasesAppState';
 import Alert from 'Components/Alert';
 import Icon from 'Components/Icon';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import FilterMenu from 'Components/Menu/FilterMenu';
 import PageMenuButton from 'Components/Menu/PageMenuButton';
@@ -172,11 +173,28 @@ function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
     []
   );
 
+  const handleRefreshPress = useCallback(() => {
+    dispatch(fetchReleases({ ...searchPayload, refresh: true }));
+  }, [searchPayload, dispatch]);
+
   const errorMessage = getErrorMessage(error);
+  const cachedAt = isFetching ? undefined : items[0]?.cachedAt;
 
   return (
     <div>
       <div className={styles.filterMenuContainer}>
+        {cachedAt ? (
+          <div className={styles.cachedResults}>
+            {translate('SearchResultsFromMinutesAgo', {
+              minutes: Math.round(
+                (Date.now() - new Date(cachedAt).getTime()) / 60000
+              ),
+            })}
+
+            <Button onPress={handleRefreshPress}>{translate('Refresh')}</Button>
+          </div>
+        ) : null}
+
         <FilterMenu
           alignMenu={align.RIGHT}
           selectedFilterKey={selectedFilterKey}

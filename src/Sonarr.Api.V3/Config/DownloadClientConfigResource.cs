@@ -11,7 +11,6 @@ namespace Sonarr.Api.V3.Config
         public int MinimumTitleSimilarity { get; set; }
         public bool AutoRedownloadFailed { get; set; }
         public bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
-        public int AutoRedownloadFailedCacheLifetime { get; set; }
         public int? ManualImportTimeout { get; set; }
     }
 
@@ -27,7 +26,6 @@ namespace Sonarr.Api.V3.Config
                 MinimumTitleSimilarity = model.MinimumTitleSimilarity,
                 AutoRedownloadFailed = model.AutoRedownloadFailed,
                 AutoRedownloadFailedFromInteractiveSearch = model.AutoRedownloadFailedFromInteractiveSearch,
-                AutoRedownloadFailedCacheLifetime = model.AutoRedownloadFailedCacheLifetime,
                 ManualImportTimeout = model.ManualImportTimeout < 0 ? null : model.ManualImportTimeout
             };
         }

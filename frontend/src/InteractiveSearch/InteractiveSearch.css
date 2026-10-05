@@ -4,6 +4,13 @@
   margin-bottom: 10px;
 }
 
+.cachedResults {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+}
+
 .filteredMessage {
   margin-top: 10px;
 }
