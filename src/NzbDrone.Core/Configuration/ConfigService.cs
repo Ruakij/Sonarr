@@ -131,6 +131,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EarlySearchReturnMinimumWait", value); }
         }
 
+        public int EpisodeSearchConcurrency
+        {
+            get { return GetValueInt("EpisodeSearchConcurrency", 1); }
+
+            set { SetValue("EpisodeSearchConcurrency", value); }
+        }
+
         public int SearchResultCacheLifetime
         {
             get { return GetValueInt("SearchResultCacheLifetime", GetValueInt("AutoRedownloadFailedCacheLifetime", 0)); }
