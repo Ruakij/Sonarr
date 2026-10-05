@@ -8,6 +8,7 @@ namespace Sonarr.Api.V3.Config
         public string DownloadClientWorkingFolders { get; set; }
 
         public bool EnableCompletedDownloadHandling { get; set; }
+        public int MinimumTitleSimilarity { get; set; }
         public bool AutoRedownloadFailed { get; set; }
         public bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
     }
@@ -21,6 +22,7 @@ namespace Sonarr.Api.V3.Config
                 DownloadClientWorkingFolders = model.DownloadClientWorkingFolders,
 
                 EnableCompletedDownloadHandling = model.EnableCompletedDownloadHandling,
+                MinimumTitleSimilarity = model.MinimumTitleSimilarity,
                 AutoRedownloadFailed = model.AutoRedownloadFailed,
                 AutoRedownloadFailedFromInteractiveSearch = model.AutoRedownloadFailedFromInteractiveSearch
             };

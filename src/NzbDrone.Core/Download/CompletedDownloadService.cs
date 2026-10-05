@@ -6,6 +6,8 @@ using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
@@ -36,6 +38,8 @@ namespace NzbDrone.Core.Download
         private readonly IEpisodeService _episodeService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IRejectedImportService _rejectedImportService;
+        private readonly IConfigService _configService;
+        private readonly ISceneMappingService _sceneMappingService;
         private readonly Logger _logger;
 
         public CompletedDownloadService(IEventAggregator eventAggregator,
@@ -48,6 +52,8 @@ namespace NzbDrone.Core.Download
                                         IEpisodeService episodeService,
                                         IMediaFileService mediaFileService,
                                         IRejectedImportService rejectedImportService,
+                                        IConfigService configService,
+                                        ISceneMappingService sceneMappingService,
                                         Logger logger)
         {
             _eventAggregator = eventAggregator;
@@ -60,6 +66,8 @@ namespace NzbDrone.Core.Download
             _episodeService = episodeService;
             _mediaFileService = mediaFileService;
             _rejectedImportService = rejectedImportService;
+            _configService = configService;
+            _sceneMappingService = sceneMappingService;
             _logger = logger;
         }
 
@@ -113,7 +121,7 @@ namespace NzbDrone.Core.Download
                 Enum.TryParse(historyItem.Data.GetValueOrDefault(EpisodeHistory.RELEASE_SOURCE, ReleaseSourceType.Unknown.ToString()), out ReleaseSourceType releaseSource);
 
                 // Show a warning if the release was matched by ID and the source is not interactive search
-                if (seriesMatchType == SeriesMatchType.Id && releaseSource != ReleaseSourceType.InteractiveSearch)
+                if (seriesMatchType == SeriesMatchType.Id && releaseSource != ReleaseSourceType.InteractiveSearch && !IsSimilarTitle(trackedDownload, series))
                 {
                     trackedDownload.Warn("Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details.");
                     SetStateToImportBlocked(trackedDownload);
@@ -123,6 +131,75 @@ namespace NzbDrone.Core.Download
             }
 
             trackedDownload.State = TrackedDownloadState.ImportPending;
+        }
+
+        private bool IsSimilarTitle(TrackedDownload trackedDownload, Series series)
+        {
+            var minimumSimilarity = _configService.MinimumTitleSimilarity;
+
+            if (minimumSimilarity <= 0)
+            {
+                return false;
+            }
+
+            var titleInfo = Parser.Parser.ParseTitle(trackedDownload.DownloadItem.Title)?.SeriesTitleInfo;
+
+            if (titleInfo == null)
+            {
+                return false;
+            }
+
+            // Series releases rarely carry a year, but when they do it tells remakes and reboots apart
+            if (titleInfo.Year > 0 && series.Year > 0 && Math.Abs(titleInfo.Year - series.Year) > 1)
+            {
+                return false;
+            }
+
+            var parsedTitles = new[] { titleInfo.TitleWithoutYear }
+                .Concat(titleInfo.AllTitles ?? Array.Empty<string>())
+                .Where(t => t.IsNotNullOrWhiteSpace())
+                .ToList();
+
+            var seriesTitles = new[] { series.Title }
+                .Concat(series.TvdbId > 0 ? _sceneMappingService.FindByTvdbId(series.TvdbId).Select(m => m.Title) : Array.Empty<string>())
+                .Where(t => t.IsNotNullOrWhiteSpace())
+                .ToList();
+
+            var best = parsedTitles
+                .SelectMany(parsedTitle => seriesTitles.Select(seriesTitle => (ParsedTitle: parsedTitle, SeriesTitle: seriesTitle, Similarity: TitleSimilarity(parsedTitle, seriesTitle))))
+                .MaxBy(m => m.Similarity);
+
+            if (best.Similarity < minimumSimilarity)
+            {
+                return false;
+            }
+
+            _logger.Info("Release '{0}' was matched to series by ID, accepting it for import as '{1}' is {2:0}% similar to '{3}' ({4})", trackedDownload.DownloadItem.Title, best.ParsedTitle, best.Similarity, best.SeriesTitle, series.Year);
+
+            return true;
+        }
+
+        // Dice coefficient over distinct words weighted by word length: independent of word order,
+        // relative to the length of both titles and short words like "of" weigh little
+        private static double TitleSimilarity(string first, string second)
+        {
+            var firstWords = TitleWords(first);
+            var secondWords = TitleWords(second);
+            var totalLength = firstWords.Sum(w => w.Length) + secondWords.Sum(w => w.Length);
+
+            if (totalLength == 0)
+            {
+                return 0;
+            }
+
+            return 200.0 * firstWords.Intersect(secondWords).Sum(w => w.Length) / totalLength;
+        }
+
+        private static HashSet<string> TitleWords(string title)
+        {
+            return Parser.Parser.NormalizeTitle(title.Replace("&", " and ").Replace('-', ' ')).RemoveAccent()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .ToHashSet();
         }
 
         public void Import(TrackedDownload trackedDownload)

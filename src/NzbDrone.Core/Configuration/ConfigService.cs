@@ -138,6 +138,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EnableCompletedDownloadHandling", value); }
         }
 
+        public int MinimumTitleSimilarity
+        {
+            get { return GetValueInt("MinimumTitleSimilarity", 0); }
+
+            set { SetValue("MinimumTitleSimilarity", value); }
+        }
+
         public bool AutoRedownloadFailed
         {
             get { return GetValueBoolean("AutoRedownloadFailed", true); }

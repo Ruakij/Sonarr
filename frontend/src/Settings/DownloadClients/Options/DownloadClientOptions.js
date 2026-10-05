@@ -61,6 +61,25 @@ function DownloadClientOptions(props) {
                   isAdvanced={true}
                   size={sizes.MEDIUM}
                 >
+                  <FormLabel>{translate('MinimumTitleSimilarity')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.NUMBER}
+                    name="minimumTitleSimilarity"
+                    min={0}
+                    max={100}
+                    unit="%"
+                    helpText={translate('MinimumTitleSimilarityHelpText')}
+                    onChange={onInputChange}
+                    {...settings.minimumTitleSimilarity}
+                  />
+                </FormGroup>
+
+                <FormGroup
+                  advancedSettings={advancedSettings}
+                  isAdvanced={true}
+                  size={sizes.MEDIUM}
+                >
                   <FormLabel>{translate('AutoRedownloadFailed')}</FormLabel>
 
                   <FormInputGroup
