@@ -54,7 +54,9 @@ jobs:
           context: _artifacts
           file: .github/docker/Dockerfile
           platforms: linux/amd64
-          build-args: BASE_VERSION=${{ steps.version.outputs.base }}
+          build-args: |
+            BASE_VERSION=${{ steps.version.outputs.base }}
+            FORK_VERSION=${{ github.ref_name }}
           load: true
           tags: fork-image-smoke
 
@@ -83,7 +85,9 @@ jobs:
           context: _artifacts
           file: .github/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: BASE_VERSION=${{ steps.version.outputs.base }}
+          build-args: |
+            BASE_VERSION=${{ steps.version.outputs.base }}
+            FORK_VERSION=${{ github.ref_name }}
           push: true
           tags: |
             ghcr.io/ruakij/sonarr:${{ github.ref_name }}

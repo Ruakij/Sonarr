@@ -13,3 +13,6 @@ FROM bin-${TARGETARCH} AS bin
 FROM lscr.io/linuxserver/sonarr:${BASE_VERSION}
 RUN rm -rf /app/sonarr/bin
 COPY --from=bin --chown=1001:1001 / /app/sonarr/bin/
+ARG FORK_VERSION
+RUN sed -i -e "s|^PackageVersion=.*|PackageVersion=${FORK_VERSION}|" \
+      -e "s|^PackageAuthor=.*|PackageAuthor=[Ruakij](https://github.com/Ruakij/Sonarr)|" /app/sonarr/package_info
