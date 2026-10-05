@@ -11,7 +11,7 @@ import PageMenuButton from 'Components/Menu/PageMenuButton';
 import Column from 'Components/Table/Column';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
-import { align, icons, kinds, sortDirections } from 'Helpers/Props';
+import { align, icons, kinds, sizes, sortDirections } from 'Helpers/Props';
 import { SortDirection } from 'Helpers/Props/sortDirections';
 import InteractiveSearchType from 'InteractiveSearch/InteractiveSearchType';
 import {
@@ -173,27 +173,33 @@ function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
     []
   );
 
-  const handleRefreshPress = useCallback(() => {
+  const handleSearchAgainPress = useCallback(() => {
     dispatch(fetchReleases({ ...searchPayload, refresh: true }));
-  }, [searchPayload, dispatch]);
+  }, [dispatch, searchPayload]);
 
   const errorMessage = getErrorMessage(error);
-  const cachedAt = isFetching ? undefined : items[0]?.cachedAt;
+  const cachedAt = items[0]?.cachedAt;
 
   return (
     <div>
       <div className={styles.filterMenuContainer}>
-        {cachedAt ? (
-          <div className={styles.cachedResults}>
-            {translate('SearchResultsFromMinutesAgo', {
+        {!isFetching && cachedAt ? (
+          <span>
+            {translate('SearchResultsCachedMinutesAgo', {
               minutes: Math.round(
                 (Date.now() - new Date(cachedAt).getTime()) / 60000
               ),
             })}
-
-            <Button onPress={handleRefreshPress}>{translate('Refresh')}</Button>
-          </div>
+          </span>
         ) : null}
+
+        <Button
+          size={sizes.SMALL}
+          isDisabled={isFetching}
+          onPress={handleSearchAgainPress}
+        >
+          {translate('SearchAgain')}
+        </Button>
 
         <FilterMenu
           alignMenu={align.RIGHT}
