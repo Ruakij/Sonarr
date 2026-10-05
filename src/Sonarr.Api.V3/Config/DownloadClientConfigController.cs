@@ -14,6 +14,8 @@ namespace Sonarr.Api.V3.Config
         {
             SharedValidator.RuleFor(c => c.MinimumTitleSimilarity)
                            .InclusiveBetween(0, 100);
+            SharedValidator.RuleFor(c => c.AutoRedownloadFailedCacheLifetime)
+                           .GreaterThanOrEqualTo(0);
         }
 
         [RestPutById]

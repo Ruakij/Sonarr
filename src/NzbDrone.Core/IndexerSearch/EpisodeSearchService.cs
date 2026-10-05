@@ -111,11 +111,45 @@ namespace NzbDrone.Core.IndexerSearch
         {
             foreach (var episodeId in message.EpisodeIds)
             {
+                if (message.UseCachedReleases && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
+                {
+                    continue;
+                }
+
                 var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false).GetAwaiter().GetResult();
                 var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
             }
+        }
+
+        internal static bool GrabCachedRelease(Func<List<DownloadDecision>> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item)
+        {
+            try
+            {
+                var decisions = cachedSearch();
+
+                if (decisions.Empty())
+                {
+                    return false;
+                }
+
+                var processed = processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
+
+                if (processed.Grabbed.Any() || processed.Pending.Any())
+                {
+                    logger.ProgressInfo("Used cached search results for {0}. {1} reports downloaded.", item, processed.Grabbed.Count);
+                    return true;
+                }
+
+                logger.Debug("No cached search result for {0} is acceptable anymore, searching indexers", item);
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(ex, "Unable to grab cached search result for {0}, searching indexers", item);
+            }
+
+            return false;
         }
 
         public void Execute(MissingEpisodeSearchCommand message)
