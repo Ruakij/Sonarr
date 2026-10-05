@@ -678,7 +678,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
                 Func<Task<IList<ReleaseInfo>>> fetch = () => indexer.DelayMs == Timeout.Infinite
                     ? _neverAnswers.Task
-                    : FetchDelayed(indexer.DelayMs, new ReleaseInfo { Title = indexer.Title, Guid = indexer.Title, Size = indexer.Score });
+                    : FetchDelayed(indexer.DelayMs, new ReleaseInfo { IndexerId = i + 1, Title = indexer.Title, Guid = indexer.Title, Size = indexer.Score });
 
                 mock.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).Returns(fetch);
                 mock.Setup(s => s.Fetch(It.IsAny<SeasonSearchCriteria>())).Returns(fetch);
