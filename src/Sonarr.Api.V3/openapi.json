@@ -9488,6 +9488,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "episodeSearchConcurrency": {
+            "type": "integer",
+            "format": "int32"
+          },
           "searchResultCacheLifetime": {
             "type": "integer",
             "format": "int32"

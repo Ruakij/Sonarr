@@ -913,5 +913,157 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
         }
+
+        // The season query answers with a release named after the given title and score, every episode query with its own release after a short delay
+        private List<AnimeEpisodeSearchCriteria> GivenAnimeSeason(int episodeCount, string packTitle, int packScore, Func<int> onEpisodeSearch = null, Action afterEpisodeSearch = null)
+        {
+            _xemSeries.SeriesType = SeriesTypes.Anime;
+
+            for (var i = 1; i <= episodeCount; i++)
+            {
+                WithEpisode(1, i, null, null);
+                _xemEpisodes.Last().Id = i;
+            }
+
+            var episodeSearches = new List<AnimeEpisodeSearchCriteria>();
+
+            var mock = new Mock<IIndexer>();
+            mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 1 });
+
+            mock.Setup(s => s.Fetch(It.IsAny<AnimeSeasonSearchCriteria>()))
+                .Returns(Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo> { new ReleaseInfo { IndexerId = 1, Title = packTitle, Guid = packTitle, Size = packScore } }));
+
+            mock.Setup(s => s.Fetch(It.IsAny<AnimeEpisodeSearchCriteria>()))
+                .Returns<AnimeEpisodeSearchCriteria>(async criteria =>
+                {
+                    lock (episodeSearches)
+                    {
+                        episodeSearches.Add(criteria);
+                    }
+
+                    onEpisodeSearch?.Invoke();
+                    await Task.Delay(50);
+                    afterEpisodeSearch?.Invoke();
+
+                    var title = "Episode " + criteria.EpisodeNumber;
+
+                    return new List<ReleaseInfo> { new ReleaseInfo { IndexerId = 1, Title = title, Guid = title, Size = 5 } };
+                });
+
+            Mocker.GetMock<IIndexerFactory>()
+                  .Setup(s => s.AutomaticSearchEnabled(true))
+                  .Returns(new List<IIndexer> { mock.Object });
+
+            Mocker.GetMock<IIndexerFactory>()
+                  .Setup(s => s.InteractiveSearchEnabled(true))
+                  .Returns(new List<IIndexer> { mock.Object });
+
+            Mocker.GetMock<IMakeDownloadDecision>()
+                .Setup(s => s.GetSearchDecision(It.IsAny<List<ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>(), It.IsAny<bool>()))
+                .Returns<List<ReleaseInfo>, SearchCriteriaBase, bool>((reports, criteria, reportProgress) => Decide(reports, criteria));
+
+            Mocker.GetMock<IMakeDownloadDecision>()
+                .Setup(s => s.GetSearchDecision(It.IsAny<List<ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>()))
+                .Returns<List<ReleaseInfo>, SearchCriteriaBase>(Decide);
+
+            return episodeSearches;
+        }
+
+        private async Task<List<string>> AnimeSeasonSearchTitles(bool interactiveSearch = false)
+        {
+            var decisions = await Subject.SeasonSearch(_xemSeries.Id, 1, false, true, true, interactiveSearch);
+
+            return decisions.Select(d => d.RemoteEpisode.Release.Title).ToList();
+        }
+
+        [Test]
+        public async Task should_skip_episode_searches_when_season_pack_is_good_enough()
+        {
+            GivenEarlySearchReturn(0);
+            var episodeSearches = GivenAnimeSeason(3, "Pack", 10);
+
+            var titles = await AnimeSeasonSearchTitles();
+
+            episodeSearches.Should().BeEmpty();
+            titles.Should().BeEquivalentTo("Pack");
+        }
+
+        [Test]
+        public async Task should_search_episodes_when_season_pack_does_not_meet_cutoff()
+        {
+            GivenEarlySearchReturn(0);
+            var episodeSearches = GivenAnimeSeason(3, "Pack", 5);
+
+            var titles = await AnimeSeasonSearchTitles();
+
+            episodeSearches.Select(c => c.EpisodeNumber).Should().BeEquivalentTo(new[] { 1, 2, 3 });
+            titles.Should().BeEquivalentTo("Pack", "Episode 1", "Episode 2", "Episode 3");
+        }
+
+        [Test]
+        public async Task should_search_episodes_when_season_pack_only_covers_some_episodes()
+        {
+            GivenEarlySearchReturn(0);
+            var episodeSearches = GivenAnimeSeason(3, "Episode Pack", 10);
+
+            await AnimeSeasonSearchTitles();
+
+            episodeSearches.Should().HaveCount(3);
+        }
+
+        [Test]
+        public async Task should_search_episodes_in_interactive_search_when_season_pack_is_good_enough()
+        {
+            GivenEarlySearchReturn(0);
+            var episodeSearches = GivenAnimeSeason(3, "Pack", 10);
+
+            await AnimeSeasonSearchTitles(true);
+
+            episodeSearches.Should().HaveCount(3);
+        }
+
+        [Test]
+        public async Task should_search_episodes_when_early_search_return_disabled()
+        {
+            var episodeSearches = GivenAnimeSeason(3, "Pack", 10);
+
+            await AnimeSeasonSearchTitles();
+
+            episodeSearches.Should().HaveCount(3);
+        }
+
+        [TestCase(1)]
+        [TestCase(3)]
+        public async Task should_run_at_most_concurrency_episode_searches_at_once(int concurrency)
+        {
+            var running = 0;
+            var maxRunning = 0;
+
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EpisodeSearchConcurrency).Returns(concurrency);
+
+            var episodeSearches = GivenAnimeSeason(
+                7,
+                "Pack",
+                5,
+                () => InterlockedMax(ref maxRunning, Interlocked.Increment(ref running)),
+                () => Interlocked.Decrement(ref running));
+
+            var titles = await AnimeSeasonSearchTitles();
+
+            maxRunning.Should().Be(concurrency);
+            episodeSearches.Should().HaveCount(7);
+            titles.Should().Equal("Pack", "Episode 1", "Episode 2", "Episode 3", "Episode 4", "Episode 5", "Episode 6", "Episode 7");
+        }
+
+        private static int InterlockedMax(ref int target, int value)
+        {
+            int current;
+
+            while (value > (current = target) && Interlocked.CompareExchange(ref target, value, current) != current)
+            {
+            }
+
+            return value;
+        }
     }
 }

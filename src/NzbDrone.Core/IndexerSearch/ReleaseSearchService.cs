@@ -560,12 +560,44 @@ namespace NzbDrone.Core.IndexerSearch
                 downloadDecisions.AddRange(decisions);
             }
 
-            foreach (var episode in episodesToSearch)
-            {
-                downloadDecisions.AddRange(await SearchAnime(series, episode, monitoredOnly, userInvokedSearch, interactiveSearch, true));
-            }
+            downloadDecisions.AddRange(await SearchEpisodes(downloadDecisions, episodesToSearch, interactiveSearch, episode => SearchAnime(series, episode, monitoredOnly, userInvokedSearch, interactiveSearch, true)));
 
             return DeDupeDecisions(downloadDecisions);
+        }
+
+        // Searches the episodes on their own after the season search, unless that search already found a good enough release.
+        private async Task<List<DownloadDecision>> SearchEpisodes(List<DownloadDecision> bulkDecisions, List<Episode> episodes, bool interactiveSearch, Func<Episode, Task<List<DownloadDecision>>> search)
+        {
+            if (episodes.Empty())
+            {
+                return new List<DownloadDecision>();
+            }
+
+            if (_configService.EarlySearchReturn && !interactiveSearch && bulkDecisions.Any(d => IsGoodEnough(d, episodes)))
+            {
+                _logger.ProgressInfo("Found a release for all {0} searched episodes, skipping episode searches", episodes.Count);
+
+                return new List<DownloadDecision>();
+            }
+
+            // Indexer rate limits reserve their request slots atomically, so concurrent searches still keep each indexer's interval
+            using var throttle = new SemaphoreSlim(Math.Max(1, _configService.EpisodeSearchConcurrency));
+
+            var results = await Task.WhenAll(episodes.Select(async episode =>
+            {
+                await throttle.WaitAsync();
+
+                try
+                {
+                    return await search(episode);
+                }
+                finally
+                {
+                    throttle.Release();
+                }
+            }));
+
+            return results.SelectMany(d => d).ToList();
         }
 
         private async Task<List<DownloadDecision>> SearchDailySeason(Series series, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
@@ -694,7 +726,16 @@ namespace NzbDrone.Core.IndexerSearch
                 decisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase);
             }
 
-            _currentSearch.Value?.Searches.Add((criteriaBase, reports, answeredIndexerIds));
+            var currentSearch = _currentSearch.Value;
+
+            if (currentSearch != null)
+            {
+                // Episode searches of a season search run concurrently and record into the same entry
+                lock (currentSearch.Searches)
+                {
+                    currentSearch.Searches.Add((criteriaBase, reports, answeredIndexerIds));
+                }
+            }
 
             // Update the last search time for all episodes if at least 1 indexer was searched.
             if (indexers.Any())
@@ -760,7 +801,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                     decisions.AddRange(batchDecisions);
 
-                    foundGoodRelease = foundGoodRelease || batchDecisions.Any(d => IsGoodEnough(d, criteriaBase));
+                    foundGoodRelease = foundGoodRelease || batchDecisions.Any(d => IsGoodEnough(d, criteriaBase.Episodes));
                 }
             }
             finally
@@ -787,12 +828,12 @@ namespace NzbDrone.Core.IndexerSearch
 
         // Good enough means the searched episodes would not be upgraded from this release anymore.
         // Only a release covering every searched episode counts, a single episode must not end a season search.
-        private bool IsGoodEnough(DownloadDecision decision, SearchCriteriaBase criteriaBase)
+        private bool IsGoodEnough(DownloadDecision decision, List<Episode> episodes)
         {
             var remoteEpisode = decision.RemoteEpisode;
 
             return decision.Approved &&
-                   criteriaBase.Episodes.All(e => remoteEpisode.Episodes.Any(r => r.Id == e.Id)) &&
+                   episodes.All(e => remoteEpisode.Episodes.Any(r => r.Id == e.Id)) &&
                    !_upgradableSpecification.CutoffNotMet(remoteEpisode.Series.QualityProfile.Value, remoteEpisode.ParsedEpisodeInfo.Quality, remoteEpisode.CustomFormats);
         }
 
