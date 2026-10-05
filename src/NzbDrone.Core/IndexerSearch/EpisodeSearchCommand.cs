@@ -6,6 +6,7 @@ namespace NzbDrone.Core.IndexerSearch
     public class EpisodeSearchCommand : Command
     {
         public List<int> EpisodeIds { get; set; }
+        public bool UseCachedReleases { get; set; }
 
         public override bool SendUpdatesToClient => true;
 

@@ -6,6 +6,7 @@ namespace NzbDrone.Core.IndexerSearch
     {
         public int SeriesId { get; set; }
         public int SeasonNumber { get; set; }
+        public bool UseCachedReleases { get; set; }
 
         public override bool SendUpdatesToClient => true;
     }
