@@ -11,6 +11,7 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -36,6 +37,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IEpisodeService _episodeService;
         private readonly IMakeDownloadDecision _makeDownloadDecision;
         private readonly IConfigService _configService;
+        private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -44,6 +46,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 IEpisodeService episodeService,
                                 IMakeDownloadDecision makeDownloadDecision,
                                 IConfigService configService,
+                                IUpgradableSpecification upgradableSpecification,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -52,6 +55,7 @@ namespace NzbDrone.Core.IndexerSearch
             _episodeService = episodeService;
             _makeDownloadDecision = makeDownloadDecision;
             _configService = configService;
+            _upgradableSpecification = upgradableSpecification;
             _logger = logger;
         }
 
@@ -563,9 +567,6 @@ namespace NzbDrone.Core.IndexerSearch
         private async Task<List<DownloadDecision>> CollectDecisionsWithEarlyReturn(List<Task<IList<ReleaseInfo>>> tasks, SearchCriteriaBase criteriaBase)
         {
             var minimumWait = TimeSpan.FromSeconds(_configService.EarlySearchReturnMinimumWait);
-            var timeout = TimeSpan.FromSeconds(_configService.EarlySearchReturnTimeout);
-            var scoreThreshold = _configService.EarlySearchReturnCustomFormatScore;
-            var searchedEpisodeIds = criteriaBase.Episodes.Select(e => e.Id).ToList();
 
             var decisions = new List<DownloadDecision>();
             var pending = new List<Task>(tasks);
@@ -579,12 +580,21 @@ namespace NzbDrone.Core.IndexerSearch
             {
                 while (pending.Any())
                 {
-                    var remaining = (foundGoodRelease ? minimumWait : timeout) - stopwatch.Elapsed;
+                    Task completed;
 
-                    // Past the deadline, indexers that already answered are still read, only those still running are dropped
-                    var completed = remaining > TimeSpan.Zero
-                        ? await Task.WhenAny(pending.Append(Task.Delay(remaining, delayCancellation.Token)))
-                        : pending.FirstOrDefault(t => t.IsCompleted);
+                    if (!foundGoodRelease)
+                    {
+                        completed = await Task.WhenAny(pending);
+                    }
+                    else
+                    {
+                        var remaining = minimumWait - stopwatch.Elapsed;
+
+                        // Past the minimum wait, indexers that already answered are still read, only those still running are dropped
+                        completed = remaining > TimeSpan.Zero
+                            ? await Task.WhenAny(pending.Append(Task.Delay(remaining, delayCancellation.Token)))
+                            : pending.FirstOrDefault(t => t.IsCompleted);
+                    }
 
                     if (completed == null)
                     {
@@ -604,10 +614,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                     decisions.AddRange(batchDecisions);
 
-                    // Only a release covering every searched episode ends the search, a single episode must not end a season search
-                    foundGoodRelease = foundGoodRelease || batchDecisions.Any(d => d.Approved &&
-                                                                                   d.RemoteEpisode.CustomFormatScore >= scoreThreshold &&
-                                                                                   searchedEpisodeIds.All(id => d.RemoteEpisode.Episodes.Any(e => e.Id == id)));
+                    foundGoodRelease = foundGoodRelease || batchDecisions.Any(d => IsGoodEnough(d, criteriaBase));
                 }
             }
             finally
@@ -630,6 +637,17 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             return decisions;
+        }
+
+        // Good enough means the searched episodes would not be upgraded from this release anymore.
+        // Only a release covering every searched episode counts, a single episode must not end a season search.
+        private bool IsGoodEnough(DownloadDecision decision, SearchCriteriaBase criteriaBase)
+        {
+            var remoteEpisode = decision.RemoteEpisode;
+
+            return decision.Approved &&
+                   criteriaBase.Episodes.All(e => remoteEpisode.Episodes.Any(r => r.Id == e.Id)) &&
+                   !_upgradableSpecification.CutoffNotMet(remoteEpisode.Series.QualityProfile.Value, remoteEpisode.ParsedEpisodeInfo.Quality, remoteEpisode.CustomFormats);
         }
 
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
