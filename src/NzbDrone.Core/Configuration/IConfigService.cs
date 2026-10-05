@@ -23,6 +23,7 @@ namespace NzbDrone.Core.Configuration
         int MinimumTitleSimilarity { get; set; }
         bool AutoRedownloadFailed { get; set; }
         bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
+        int ManualImportTimeout { get; set; }
 
         // Media Management
         bool AutoUnmonitorPreviouslyDownloadedEpisodes { get; set; }

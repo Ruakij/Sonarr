@@ -19,6 +19,13 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public bool IsTrackable { get; set; }
         public bool HasNotifiedManualInteractionRequired { get; set; }
 
+        // Kept in memory only, the manual import timeout starts over after a restart
+        public DateTime? ManualInteractionRequiredSince { get; set; }
+
+        // True when the last import attempt or block has reasons that do not resolve by waiting
+        public bool ImportRejectedPermanently { get; set; }
+        public string FailMessage { get; private set; }
+
         public TrackedDownload()
         {
             StatusMessages = Array.Empty<TrackedDownloadStatusMessage>();
@@ -36,8 +43,9 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             StatusMessages = statusMessages;
         }
 
-        public void Fail()
+        public void Fail(string message = null)
         {
+            FailMessage = message;
             Status = TrackedDownloadStatus.Error;
             State = TrackedDownloadState.FailedPending;
 
