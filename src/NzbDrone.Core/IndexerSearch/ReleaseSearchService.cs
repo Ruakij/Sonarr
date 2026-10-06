@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
@@ -30,6 +31,10 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true);
         CachedSearchResult CachedEpisodeSearch(int episodeId, bool interactiveSearch);
         CachedSearchResult CachedSeasonSearch(int seriesId, int seasonNumber, bool interactiveSearch);
+        Task<CachedSearchResult> InteractiveEpisodeSearch(int episodeId, bool refresh, bool searchRemaining);
+        Task<CachedSearchResult> InteractiveSeasonSearch(int seriesId, int seasonNumber, bool refresh, bool searchRemaining);
+        InteractiveSearchStatus InteractiveEpisodeSearchStatus(int episodeId);
+        InteractiveSearchStatus InteractiveSeasonSearchStatus(int seriesId, int seasonNumber);
     }
 
     public class ReleaseSearchService : ISearchForReleases
@@ -42,7 +47,11 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IConfigService _configService;
         private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly ICached<CachedSearch> _searchResultCache;
+        private readonly ICached<InteractiveSearch> _interactiveSearches;
         private readonly AsyncLocal<CachedSearch> _currentSearch = new AsyncLocal<CachedSearch>();
+
+        // Searching the remaining indexers of an interactive search queries only these, all at once
+        private readonly AsyncLocal<HashSet<int>> _onlyIndexerIds = new AsyncLocal<HashSet<int>>();
 
         // Search Concurrency is one limit per search command: every indexer query of the command takes a slot of the same semaphore.
         // Only the indexer query holds a slot, the searches around it never wait on one, so nested searches cannot deadlock
@@ -67,6 +76,7 @@ namespace NzbDrone.Core.IndexerSearch
             _configService = configService;
             _upgradableSpecification = upgradableSpecification;
             _searchResultCache = cacheManager.GetCache<CachedSearch>(GetType(), "searchResults");
+            _interactiveSearches = cacheManager.GetCache<InteractiveSearch>(GetType(), "interactiveSearches");
             _logger = logger;
         }
 
@@ -86,7 +96,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var cached = useCache ? FindCachedSearch(key, episode.SeriesId, episodes, false, userInvokedSearch, interactiveSearch) : null;
 
-            return cached?.Decisions ?? await SearchAndCache(key, episodes, () => SearchEpisode(episode, userInvokedSearch, interactiveSearch));
+            return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchEpisode(episode, userInvokedSearch, interactiveSearch))).Decisions;
         }
 
         public async Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true)
@@ -97,7 +107,137 @@ namespace NzbDrone.Core.IndexerSearch
 
             var cached = useCache ? FindCachedSearch(key, seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch) : null;
 
-            return cached?.Decisions ?? await SearchAndCache(key, episodes, () => SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch));
+            return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch))).Decisions;
+        }
+
+        public async Task<CachedSearchResult> InteractiveEpisodeSearch(int episodeId, bool refresh, bool searchRemaining)
+        {
+            var episode = _episodeService.GetEpisode(episodeId);
+
+            return await InteractiveSearchItem(EpisodeCacheKey(episodeId), episode.SeriesId, new List<Episode> { episode }, refresh, searchRemaining, () => SearchEpisode(episode, true, true));
+        }
+
+        public async Task<CachedSearchResult> InteractiveSeasonSearch(int seriesId, int seasonNumber, bool refresh, bool searchRemaining)
+        {
+            var episodes = _episodeService.GetEpisodesBySeason(seriesId, seasonNumber);
+
+            return await InteractiveSearchItem(SeasonCacheKey(seriesId, seasonNumber), seriesId, episodes, refresh, searchRemaining, () => SearchSeason(seriesId, seasonNumber, episodes, false, true, true));
+        }
+
+        public InteractiveSearchStatus InteractiveEpisodeSearchStatus(int episodeId)
+        {
+            return GetInteractiveSearchStatus(EpisodeCacheKey(episodeId));
+        }
+
+        public InteractiveSearchStatus InteractiveSeasonSearchStatus(int seriesId, int seasonNumber)
+        {
+            return GetInteractiveSearchStatus(SeasonCacheKey(seriesId, seasonNumber));
+        }
+
+        private async Task<CachedSearchResult> InteractiveSearchItem(string key, int seriesId, List<Episode> episodes, bool refresh, bool searchRemaining, Func<Task<List<DownloadDecision>>> search)
+        {
+            SearchSlots.Value ??= new SemaphoreSlim(Math.Max(1, _configService.SearchConcurrency));
+
+            var previous = searchRemaining ? _interactiveSearches.Find(key) : null;
+
+            if (previous != null)
+            {
+                var remainingIndexerIds = GetInteractiveSearchStatus(previous).Indexers
+                    .Where(i => i.Status != IndexerSearchStatusType.Searched && i.Status != IndexerSearchStatusType.Cached)
+                    .Select(i => i.IndexerId)
+                    .ToHashSet();
+
+                var interactiveSearch = previous;
+
+                if (remainingIndexerIds.Any())
+                {
+                    _logger.ProgressInfo("Searching {0} remaining indexers", remainingIndexerIds.Count);
+
+                    _onlyIndexerIds.Value = remainingIndexerIds;
+
+                    var entry = (await SearchAndCache(key, episodes, search, previous.Entry)).Entry;
+
+                    interactiveSearch = new InteractiveSearch
+                    {
+                        Entry = entry,
+                        SeriesId = seriesId,
+                        CachedAt = previous.CachedAt,
+                        SearchedIndexerIds = previous.SearchedIndexerIds.Union(remainingIndexerIds).ToHashSet()
+                    };
+                }
+
+                SetInteractiveSearch(key, interactiveSearch);
+
+                return new CachedSearchResult(Decide(interactiveSearch.Entry, seriesId, episodes, false, true, true, false).Decisions, interactiveSearch.CachedAt);
+            }
+
+            var cached = refresh ? null : FindCachedSearch(key, seriesId, episodes, false, true, true);
+
+            if (cached != null)
+            {
+                SetInteractiveSearch(key, new InteractiveSearch { Entry = FindCachedEntry(key), SeriesId = seriesId, CachedAt = cached.SearchedAt, SearchedIndexerIds = new HashSet<int>() });
+
+                return cached;
+            }
+
+            var result = await SearchAndCache(key, episodes, search);
+
+            SetInteractiveSearch(key, new InteractiveSearch { Entry = result.Entry, SeriesId = seriesId, SearchedIndexerIds = result.Entry.Searches.SelectMany(s => s.Statuses).Select(i => i.IndexerId).ToHashSet() });
+
+            return new CachedSearchResult(result.Decisions, null);
+        }
+
+        private void SetInteractiveSearch(string key, InteractiveSearch interactiveSearch)
+        {
+            // Lives as long as the releases of the interactive search can be grabbed
+            _interactiveSearches.ClearExpired();
+            _interactiveSearches.Set(key, interactiveSearch, TimeSpan.FromMinutes(30));
+        }
+
+        private InteractiveSearchStatus GetInteractiveSearchStatus(string key)
+        {
+            var interactiveSearch = _interactiveSearches.Find(key);
+
+            return interactiveSearch == null ? new InteractiveSearchStatus() : GetInteractiveSearchStatus(interactiveSearch);
+        }
+
+        private InteractiveSearchStatus GetInteractiveSearchStatus(InteractiveSearch interactiveSearch)
+        {
+            var entry = interactiveSearch.Entry;
+            var seriesTags = _seriesService.GetSeries(interactiveSearch.SeriesId).Tags;
+
+            var statuses = _indexerFactory.InteractiveSearchEnabled()
+                .Where(i => i.Definition.Tags.Empty() || i.Definition.Tags.Intersect(seriesTags).Any())
+                .Select(indexer =>
+                {
+                    var definition = (IndexerDefinition)indexer.Definition;
+                    var searches = entry.Searches.SelectMany(s => s.Statuses).Where(s => s.IndexerId == definition.Id).ToList();
+
+                    // A season searched with several queries shows the worst outcome of the indexer
+                    var worst = searches.MaxBy(s => s.Status);
+
+                    var status = new IndexerSearchStatus
+                    {
+                        IndexerId = definition.Id,
+                        Name = definition.Name,
+                        Priority = definition.Priority,
+                        Status = worst?.Status ?? IndexerSearchStatusType.Skipped,
+                        ReleaseCount = searches.Sum(s => s.ReleaseCount),
+                        Message = worst?.Message
+                    };
+
+                    if (status.Status == IndexerSearchStatusType.Searched && !interactiveSearch.SearchedIndexerIds.Contains(definition.Id))
+                    {
+                        status.Status = IndexerSearchStatusType.Cached;
+                    }
+
+                    return status;
+                })
+                .OrderBy(s => s.Priority)
+                .ThenBy(s => s.Name)
+                .ToList();
+
+            return new InteractiveSearchStatus { CachedAt = interactiveSearch.CachedAt, Indexers = statuses };
         }
 
         public CachedSearchResult CachedEpisodeSearch(int episodeId, bool interactiveSearch)
@@ -144,6 +284,19 @@ namespace NzbDrone.Core.IndexerSearch
                 return null;
             }
 
+            var result = Decide(entry, seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch, true);
+
+            if (result.Decisions != null)
+            {
+                _logger.ProgressInfo("Using {0} search results for {1} cached at {2}", result.ReleaseCount, result.Series.Title, entry.SearchedAt.ToLocalTime());
+            }
+
+            return result.Decisions == null ? null : new CachedSearchResult(result.Decisions, entry.SearchedAt);
+        }
+
+        // Without requireComplete an interactive search gets the results of every indexer that answered, as when the remaining indexers were searched
+        private (List<DownloadDecision> Decisions, int ReleaseCount, Series Series) Decide(CachedSearch entry, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool requireComplete)
+        {
             var series = _seriesService.GetSeries(seriesId);
             var decisions = new List<DownloadDecision>();
             var releaseCount = 0;
@@ -171,10 +324,10 @@ namespace NzbDrone.Core.IndexerSearch
                 var searchDecisions = _makeDownloadDecision.GetSearchDecision(releases, criteria);
 
                 // Interactive search shows everything its indexers return, so it is only served by a search that got an answer from all indexers it would search
-                if (interactiveSearch && !IsCompleteSearch(indexers, search.IndexerIds, searchDecisions, criteria))
+                if (interactiveSearch && requireComplete && !IsCompleteSearch(indexers, search.IndexerIds, searchDecisions, criteria))
                 {
                     _logger.Debug("Cached search results for {0} are missing results of some indexers, searching indexers", criteria);
-                    return null;
+                    return (null, 0, series);
                 }
 
                 releaseCount += releases.Count;
@@ -182,9 +335,7 @@ namespace NzbDrone.Core.IndexerSearch
                 decisions.AddRange(searchDecisions);
             }
 
-            _logger.ProgressInfo("Using {0} search results for {1} cached at {2}", releaseCount, series.Title, entry.SearchedAt.ToLocalTime());
-
-            return new CachedSearchResult(DeDupeDecisions(decisions), entry.SearchedAt);
+            return (DeDupeDecisions(decisions), releaseCount, series);
         }
 
         // Complete means every indexer group was answered up to the one that found a good enough release, like a search in priority order would have searched them
@@ -211,7 +362,8 @@ namespace NzbDrone.Core.IndexerSearch
             return true;
         }
 
-        private async Task<List<DownloadDecision>> SearchAndCache(string key, List<Episode> episodes, Func<Task<List<DownloadDecision>>> search)
+        // With previous the search only adds to the results of an earlier search, which keeps its search time
+        private async Task<(List<DownloadDecision> Decisions, CachedSearch Entry)> SearchAndCache(string key, List<Episode> episodes, Func<Task<List<DownloadDecision>>> search, CachedSearch previous = null)
         {
             var entry = new CachedSearch { EpisodeIds = episodes.Select(e => e.Id).ToHashSet() };
 
@@ -219,6 +371,12 @@ namespace NzbDrone.Core.IndexerSearch
             _currentSearch.Value = entry;
 
             var decisions = await search();
+
+            if (previous != null)
+            {
+                entry = previous.Merge(entry);
+            }
+
             var lifetime = _configService.SearchResultCacheLifetime;
 
             if (lifetime <= 0)
@@ -232,7 +390,7 @@ namespace NzbDrone.Core.IndexerSearch
                 _searchResultCache.Set(key, entry, TimeSpan.FromMinutes(lifetime));
             }
 
-            return decisions;
+            return (decisions, entry);
         }
 
         private async Task<List<DownloadDecision>> SearchEpisode(Episode episode, bool userInvokedSearch, bool interactiveSearch)
@@ -704,11 +862,21 @@ namespace NzbDrone.Core.IndexerSearch
         private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
         {
             var indexers = GetIndexers(criteriaBase);
+            var onlyIndexerIds = _onlyIndexerIds.Value;
+
+            if (onlyIndexerIds != null)
+            {
+                indexers = indexers.Where(i => onlyIndexerIds.Contains(i.Definition.Id)).ToList();
+            }
 
             List<DownloadDecision> decisions;
             var reports = new List<ReleaseInfo>();
             var answeredIndexerIds = new HashSet<int>();
             var slots = SearchSlots.Value;
+
+            // The remaining indexers of an interactive search are asked for explicitly, so they are searched at once
+            var groups = onlyIndexerIds == null ? GetIndexerGroups(indexers) : new List<List<IIndexer>> { indexers };
+            var searchedGroups = 0;
 
             if (slots != null)
             {
@@ -721,12 +889,12 @@ namespace NzbDrone.Core.IndexerSearch
 
                 decisions = new List<DownloadDecision>();
 
-                var groups = GetIndexerGroups(indexers);
-
                 for (var i = 0; i < groups.Count; i++)
                 {
                     var group = groups[i];
                     var tasks = group.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
+
+                    searchedGroups++;
 
                     if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
                     {
@@ -760,10 +928,15 @@ namespace NzbDrone.Core.IndexerSearch
 
             if (currentSearch != null)
             {
+                var statuses = GetStatuses(groups, searchedGroups, answeredIndexerIds, reports, criteriaBase);
+
+                // Failed indexers did not deliver their results, so the cache does not count them as answered
+                var deliveredIndexerIds = answeredIndexerIds.Where(id => !criteriaBase.IndexerFailures.ContainsKey(id)).ToHashSet();
+
                 // Episode searches of a season search run concurrently and record into the same entry
                 lock (currentSearch.Searches)
                 {
-                    currentSearch.Searches.Add((criteriaBase, reports, answeredIndexerIds));
+                    currentSearch.Searches.Add(new Search(criteriaBase, reports, deliveredIndexerIds, statuses));
                 }
             }
 
@@ -888,6 +1061,49 @@ namespace NzbDrone.Core.IndexerSearch
                    !_upgradableSpecification.CutoffNotMet(remoteEpisode.Series.QualityProfile.Value, remoteEpisode.ParsedEpisodeInfo.Quality, remoteEpisode.CustomFormats);
         }
 
+        // Indexers of groups never reached were skipped, those still running when the search returned were not waited for
+        private static List<IndexerSearchStatus> GetStatuses(List<List<IIndexer>> groups, int searchedGroups, HashSet<int> answeredIndexerIds, List<ReleaseInfo> reports, SearchCriteriaBase criteriaBase)
+        {
+            return groups.SelectMany((group, g) => group.Select(indexer =>
+            {
+                var id = indexer.Definition.Id;
+
+                if (g >= searchedGroups)
+                {
+                    return GetStatus(indexer, IndexerSearchStatusType.Skipped, reports);
+                }
+
+                if (!answeredIndexerIds.Contains(id))
+                {
+                    return GetStatus(indexer, IndexerSearchStatusType.NotWaitedFor, reports);
+                }
+
+                if (criteriaBase.IndexerFailures.TryGetValue(id, out var failure))
+                {
+                    var timedOut = failure is TaskCanceledException or TimeoutException or WebException { Status: WebExceptionStatus.Timeout };
+
+                    return GetStatus(indexer, timedOut ? IndexerSearchStatusType.TimedOut : IndexerSearchStatusType.Failed, reports, failure.Message);
+                }
+
+                return GetStatus(indexer, IndexerSearchStatusType.Searched, reports);
+            })).ToList();
+        }
+
+        private static IndexerSearchStatus GetStatus(IIndexer indexer, IndexerSearchStatusType status, List<ReleaseInfo> reports, string message = null)
+        {
+            var id = indexer.Definition.Id;
+
+            return new IndexerSearchStatus
+            {
+                IndexerId = id,
+                Name = indexer.Definition.Name,
+                Priority = ((IndexerDefinition)indexer.Definition).Priority,
+                Status = status,
+                ReleaseCount = reports.Count(r => r.IndexerId == id),
+                Message = message
+            };
+        }
+
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
         {
             try
@@ -896,6 +1112,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
             catch (Exception ex)
             {
+                criteriaBase.IndexerFailures.TryAdd(indexer.Definition.Id, ex);
                 _logger.Error(ex, "Error while searching for {0}", criteriaBase);
             }
 
@@ -912,11 +1129,79 @@ namespace NzbDrone.Core.IndexerSearch
 
         internal class CachedSearch
         {
-            public DateTime SearchedAt { get; } = DateTime.UtcNow;
+            public DateTime SearchedAt { get; set; } = DateTime.UtcNow;
             public HashSet<int> EpisodeIds { get; set; }
 
-            // IndexerIds are the indexers that answered, a search returned early lacks the ones still pending
-            public List<(SearchCriteriaBase Criteria, List<ReleaseInfo> Reports, HashSet<int> IndexerIds)> Searches { get; } = new ();
+            public List<Search> Searches { get; } = new ();
+
+            // Adds a search of some indexers to this one, their new results and statuses replace the earlier ones
+            public CachedSearch Merge(CachedSearch remaining)
+            {
+                var merged = new CachedSearch { SearchedAt = SearchedAt, EpisodeIds = EpisodeIds };
+                var added = remaining.Searches.ToList();
+
+                foreach (var search in Searches)
+                {
+                    var match = added.FirstOrDefault(r => SameCriteria(r.Criteria, search.Criteria));
+
+                    if (match == null)
+                    {
+                        merged.Searches.Add(search);
+                        continue;
+                    }
+
+                    added.Remove(match);
+
+                    var newIds = match.Statuses.Select(s => s.IndexerId).ToHashSet();
+
+                    merged.Searches.Add(new Search(
+                        search.Criteria,
+                        search.Reports.Where(r => !newIds.Contains(r.IndexerId)).Concat(match.Reports).ToList(),
+                        search.IndexerIds.Where(id => !newIds.Contains(id)).Concat(match.IndexerIds).ToHashSet(),
+                        search.Statuses.Where(s => !newIds.Contains(s.IndexerId)).Concat(match.Statuses).ToList()));
+                }
+
+                merged.Searches.AddRange(added);
+
+                return merged;
+            }
+
+            private static bool SameCriteria(SearchCriteriaBase a, SearchCriteriaBase b)
+            {
+                return a.GetType() == b.GetType() &&
+                       a.ToString() == b.ToString() &&
+                       a.Episodes.Select(e => e.Id).OrderBy(id => id).SequenceEqual(b.Episodes.Select(e => e.Id).OrderBy(id => id));
+            }
+        }
+
+        internal class Search
+        {
+            public SearchCriteriaBase Criteria { get; }
+            public List<ReleaseInfo> Reports { get; }
+
+            // The indexers that answered, a search returned early lacks the ones still pending
+            public HashSet<int> IndexerIds { get; }
+            public List<IndexerSearchStatus> Statuses { get; }
+
+            public Search(SearchCriteriaBase criteria, List<ReleaseInfo> reports, HashSet<int> indexerIds, List<IndexerSearchStatus> statuses)
+            {
+                Criteria = criteria;
+                Reports = reports;
+                IndexerIds = indexerIds;
+                Statuses = statuses;
+            }
+        }
+
+        internal class InteractiveSearch
+        {
+            public CachedSearch Entry { get; set; }
+            public int SeriesId { get; set; }
+
+            // Null when the results came from the search result cache
+            public DateTime? CachedAt { get; set; }
+
+            // Indexers queried by this interactive search, the others answered an earlier search
+            public HashSet<int> SearchedIndexerIds { get; set; }
         }
     }
 }
