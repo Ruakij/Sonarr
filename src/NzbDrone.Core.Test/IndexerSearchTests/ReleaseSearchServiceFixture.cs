@@ -1039,7 +1039,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var running = 0;
             var maxRunning = 0;
 
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.EpisodeSearchConcurrency).Returns(concurrency);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchConcurrency).Returns(concurrency);
 
             var episodeSearches = GivenAnimeSeason(
                 7,
@@ -1053,6 +1053,44 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             maxRunning.Should().Be(concurrency);
             episodeSearches.Should().HaveCount(7);
             titles.Should().Equal("Pack", "Episode 1", "Episode 2", "Episode 3", "Episode 4", "Episode 5", "Episode 6", "Episode 7");
+        }
+
+        [Test]
+        public async Task should_run_daily_season_year_searches_up_to_concurrency()
+        {
+            var running = 0;
+            var maxRunning = 0;
+            var years = new List<int>();
+
+            foreach (var year in new[] { 2005, 2006, 2007, 2008 })
+            {
+                WithEpisode(1, year - 2000, null, null, $"{year}-01-01");
+                WithEpisode(1, year - 1000, null, null, $"{year}-01-02");
+            }
+
+            _xemSeries.SeriesType = SeriesTypes.Daily;
+
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchConcurrency).Returns(2);
+
+            _mockIndexer.Setup(v => v.Fetch(It.IsAny<DailySeasonSearchCriteria>()))
+                .Returns<DailySeasonSearchCriteria>(async criteria =>
+                {
+                    InterlockedMax(ref maxRunning, Interlocked.Increment(ref running));
+                    await Task.Delay(50);
+                    Interlocked.Decrement(ref running);
+
+                    lock (years)
+                    {
+                        years.Add(criteria.Year);
+                    }
+
+                    return new List<ReleaseInfo>();
+                });
+
+            await Subject.SeasonSearch(_xemSeries.Id, 1, false, false, true, false);
+
+            maxRunning.Should().Be(2);
+            years.Should().BeEquivalentTo(new[] { 2005, 2006, 2007, 2008 });
         }
 
         private static int InterlockedMax(ref int target, int value)
