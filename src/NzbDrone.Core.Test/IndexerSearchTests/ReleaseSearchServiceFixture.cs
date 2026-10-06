@@ -1202,6 +1202,21 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public async Task should_count_minimum_wait_from_start_of_search_over_priority_groups()
+        {
+            GivenEarlySearchReturn(2);
+            GivenSearchIndexersInPriorityOrder();
+            GivenIndexersWithPriority((1, 1500, "First", 5), (2, 0, "Fast", 10), (2, Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(1.8));
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(3));
+            titles.Should().BeEquivalentTo("First", "Fast");
+        }
+
+        [Test]
         public async Task should_search_indexers_up_to_required_priority_as_first_group()
         {
             GivenEarlySearchReturn(0, 2);
