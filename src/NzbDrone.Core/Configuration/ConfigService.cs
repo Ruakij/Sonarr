@@ -152,6 +152,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("SearchResultCacheLifetime", value); }
         }
 
+        public bool SearchIndexersInPriorityOrder
+        {
+            get { return GetValueBoolean("SearchIndexersInPriorityOrder", false); }
+
+            set { SetValue("SearchIndexersInPriorityOrder", value); }
+        }
+
         public int MinimumAge
         {
             get { return GetValueInt("MinimumAge", 0); }
