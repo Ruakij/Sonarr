@@ -46,7 +46,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     continue;
                 }
 
-                var historyForEpisode = _historyService.FindByEpisodeId(episode.Id);
+                var historyForEpisode = DecisionRunCache.GetOrAdd("HistoryByEpisode", episode.Id, () => _historyService.FindByEpisodeId(episode.Id));
                 var lastGrabbed = historyForEpisode.FirstOrDefault(h => h.EventType == EpisodeHistoryEventType.Grabbed);
 
                 if (lastGrabbed == null)

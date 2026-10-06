@@ -64,6 +64,52 @@ namespace NzbDrone.Core.Test.Blocklisting
             Subject.BlocklistedByTitle(_blocklist.SeriesId, _blocklist.SourceTitle.ToUpperInvariant()).Should().HaveCount(1);
         }
 
+        [TestCase("series.title")]
+        [TestCase("SERIES.TITLE.S01E01")]
+        [TestCase("series_title")]
+        [TestCase("series%title")]
+        [TestCase("100%")]
+        [TestCase("_")]
+        [TestCase("%")]
+        [TestCase("")]
+        [TestCase("\u00c4rger")]
+        [TestCase("\u00e4rger")]
+        [TestCase("STRASSE")]
+        [TestCase("s01e01.720p")]
+        [TestCase("abc\\def")]
+        [TestCase("ABCDEF0123")]
+        public void in_memory_match_should_equal_database_match(string search)
+        {
+            var titles = new[]
+            {
+                "series.title.s01e01", "Series_Title_S01E01", "Series Title 100% Uncut", "\u00e4rger.s01e01",
+                "Stra\u00dfe.S01E01", "abc\\def", "a.b.c", ""
+            };
+
+            var hashes = new[] { "abcdef0123", "ABCDEF0123", "x_y", null, null, null, null, null };
+
+            var items = titles.Select((t, i) => new Blocklist
+            {
+                SeriesId = _series1.Id,
+                EpisodeIds = new List<int> { 1 },
+                Quality = new QualityModel(Quality.Bluray720p),
+                Languages = new List<Language> { Language.English },
+                SourceTitle = t,
+                TorrentInfoHash = hashes[i],
+                Date = DateTime.UtcNow
+            }).ToList();
+
+            Db.InsertMany(items);
+
+            var all = Subject.BlocklistedBySeries(_series1.Id);
+
+            all.Where(b => BlocklistService.SqliteLikeContains(b.SourceTitle, search)).Select(b => b.Id)
+                .Should().BeEquivalentTo(Subject.BlocklistedByTitle(_series1.Id, search).Select(b => b.Id));
+
+            all.Where(b => BlocklistService.SqliteLikeContains(b.TorrentInfoHash, search)).Select(b => b.Id)
+                .Should().BeEquivalentTo(Subject.BlocklistedByTorrentInfoHash(_series1.Id, search).Select(b => b.Id));
+        }
+
         [Test]
         public void should_delete_blocklists_by_seriesId()
         {

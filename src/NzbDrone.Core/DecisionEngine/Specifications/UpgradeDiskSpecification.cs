@@ -38,9 +38,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
                 _logger.Debug("Comparing file quality with report. Existing file is {0}.", file.Quality);
 
+                // The file belongs to the series of the release, which saves loading the series of the file
+                var customFormats = DecisionRunCache.GetOrAdd("EpisodeFileCustomFormats", file.Id, () => _formatService.ParseCustomFormat(file, subject.Series));
+
                 if (!_upgradableSpecification.CutoffNotMet(qualityProfile,
                         file.Quality,
-                        _formatService.ParseCustomFormat(file),
+                        customFormats,
                         subject.ParsedEpisodeInfo.Quality))
                 {
                     _logger.Debug("Cutoff already met, rejecting.");
@@ -50,8 +53,6 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
                     return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file meets cutoff: {0}", qualityCutoff);
                 }
-
-                var customFormats = _formatService.ParseCustomFormat(file);
 
                 var upgradeableRejectReason = _upgradableSpecification.IsUpgradable(qualityProfile,
                     file.Quality,

@@ -7,11 +7,14 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DataAugmentation.Scene;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.DecisionEngine
 {
@@ -48,7 +51,10 @@ namespace NzbDrone.Core.DecisionEngine
 
         public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
         {
-            return GetDecisions(reports, pushedRelease).ToList();
+            using (DecisionRunCache.Begin())
+            {
+                return GetDecisions(reports, pushedRelease).ToList();
+            }
         }
 
         public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase)
@@ -58,7 +64,10 @@ namespace NzbDrone.Core.DecisionEngine
 
         public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase, bool reportProgress)
         {
-            return GetDecisions(reports, false, searchCriteriaBase, reportProgress).ToList();
+            using (DecisionRunCache.Begin())
+            {
+                return GetDecisions(reports, false, searchCriteriaBase, reportProgress).ToList();
+            }
         }
 
         private IEnumerable<DownloadDecision> GetDecisions(List<ReleaseInfo> reports, bool pushedRelease, SearchCriteriaBase searchCriteria = null, bool reportProgress = true)
@@ -122,6 +131,7 @@ namespace NzbDrone.Core.DecisionEngine
                         }
                         else
                         {
+                            ShareRunData(remoteEpisode);
                             _aggregationService.Augment(remoteEpisode);
 
                             remoteEpisode.CustomFormats = _formatCalculator.ParseCustomFormat(remoteEpisode, remoteEpisode.Release.Size);
@@ -200,6 +210,28 @@ namespace NzbDrone.Core.DecisionEngine
                     }
 
                     yield return decision;
+                }
+            }
+        }
+
+        // Releases mapped outside the search criteria get their own series and episode instances,
+        // so their lazy loads would otherwise query the same rows again for every release.
+        private static void ShareRunData(RemoteEpisode remoteEpisode)
+        {
+            var series = remoteEpisode.Series;
+
+            if (series.QualityProfile is { IsLoaded: false })
+            {
+                var lazyProfile = series.QualityProfile;
+                series.QualityProfile = new LazyLoaded<QualityProfile>(DecisionRunCache.GetOrAdd("QualityProfile", series.QualityProfileId, () => lazyProfile.Value));
+            }
+
+            foreach (var episode in remoteEpisode.Episodes)
+            {
+                if (episode.EpisodeFileId != 0 && episode.EpisodeFile is { IsLoaded: false })
+                {
+                    var lazyFile = episode.EpisodeFile;
+                    episode.EpisodeFile = new LazyLoaded<EpisodeFile>(DecisionRunCache.GetOrAdd("EpisodeFile", episode.EpisodeFileId, () => lazyFile.Value));
                 }
             }
         }
