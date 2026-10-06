@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Messaging.Commands;
@@ -28,10 +29,12 @@ namespace NzbDrone.Core.Blocklisting
                                     IHandleAsync<SeriesDeletedEvent>
     {
         private readonly IBlocklistRepository _blocklistRepository;
+        private readonly IMainDatabase _database;
 
-        public BlocklistService(IBlocklistRepository blocklistRepository)
+        public BlocklistService(IBlocklistRepository blocklistRepository, IMainDatabase database)
         {
             _blocklistRepository = blocklistRepository;
+            _database = database;
         }
 
         public bool Blocklisted(int seriesId, ReleaseInfo release)
@@ -45,19 +48,93 @@ namespace NzbDrone.Core.Blocklisting
 
                 if (torrentInfo.InfoHash.IsNotNullOrWhiteSpace())
                 {
-                    var blocklistedByTorrentInfohash = _blocklistRepository.BlocklistedByTorrentInfoHash(seriesId, torrentInfo.InfoHash);
+                    var blocklistedByTorrentInfohash = InRunCache()
+                        ? SeriesBlocklist(seriesId).Where(b => SqliteLikeContains(b.TorrentInfoHash, torrentInfo.InfoHash))
+                        : _blocklistRepository.BlocklistedByTorrentInfoHash(seriesId, torrentInfo.InfoHash);
 
                     return blocklistedByTorrentInfohash.Any(b => SameTorrent(b, torrentInfo));
                 }
 
-                return _blocklistRepository.BlocklistedByTitle(seriesId, release.Title)
+                return BlocklistedByTitle(seriesId, release.Title)
                     .Where(b => b.Protocol == DownloadProtocol.Torrent)
                     .Any(b => SameTorrent(b, torrentInfo));
             }
 
-            return _blocklistRepository.BlocklistedByTitle(seriesId, release.Title)
+            return BlocklistedByTitle(seriesId, release.Title)
                 .Where(b => b.Protocol == DownloadProtocol.Usenet)
                 .Any(b => SameNzb(b, release));
+        }
+
+        // Within a decision run the blocklist of the series is loaded once and matched in memory. Only for SQLite,
+        // whose LIKE rules are matched exactly; PostgreSQL ILIKE depends on the collation and keeps querying.
+        private bool InRunCache()
+        {
+            return DecisionRunCache.Active && _database.DatabaseType == DatabaseType.SQLite;
+        }
+
+        private List<Blocklist> SeriesBlocklist(int seriesId)
+        {
+            return DecisionRunCache.GetOrAdd("BlocklistBySeries", seriesId, () => _blocklistRepository.BlocklistedBySeries(seriesId));
+        }
+
+        private IEnumerable<Blocklist> BlocklistedByTitle(int seriesId, string title)
+        {
+            return InRunCache()
+                ? SeriesBlocklist(seriesId).Where(b => SqliteLikeContains(b.SourceTitle, title))
+                : _blocklistRepository.BlocklistedByTitle(seriesId, title);
+        }
+
+        // value LIKE '%' || search || '%' as SQLite evaluates it: % and _ in the search are wildcards,
+        // _ matches one character, only ASCII letters compare case-insensitively and NULL never matches.
+        public static bool SqliteLikeContains(string value, string search)
+        {
+            if (value == null || search == null)
+            {
+                return false;
+            }
+
+            var text = value.EnumerateRunes().Select(FoldAscii).ToArray();
+            var pattern = ("%" + search + "%").EnumerateRunes().Select(FoldAscii).ToArray();
+
+            var t = 0;
+            var p = 0;
+            var star = -1;
+            var starText = 0;
+
+            while (t < text.Length)
+            {
+                if (p < pattern.Length && pattern[p] == '%')
+                {
+                    star = p++;
+                    starText = t;
+                }
+                else if (p < pattern.Length && (pattern[p] == '_' || pattern[p] == text[t]))
+                {
+                    p++;
+                    t++;
+                }
+                else if (star >= 0)
+                {
+                    p = star + 1;
+                    t = ++starText;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            while (p < pattern.Length && pattern[p] == '%')
+            {
+                p++;
+            }
+
+            return p == pattern.Length;
+        }
+
+        private static int FoldAscii(System.Text.Rune rune)
+        {
+            return rune.Value is >= 'A' and <= 'Z' ? rune.Value + 32 : rune.Value;
         }
 
         public bool BlocklistedTorrentHash(int seriesId, string hash)

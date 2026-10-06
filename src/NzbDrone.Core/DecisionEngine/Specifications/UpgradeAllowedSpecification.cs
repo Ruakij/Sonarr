@@ -36,7 +36,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     continue;
                 }
 
-                var fileCustomFormats = _formatService.ParseCustomFormat(file, subject.Series);
+                var fileCustomFormats = DecisionRunCache.GetOrAdd("EpisodeFileCustomFormats", file.Id, () => _formatService.ParseCustomFormat(file, subject.Series));
 
                 _logger.Debug("Comparing file quality with report. Existing file is {0}", file.Quality);
 

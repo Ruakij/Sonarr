@@ -18,6 +18,8 @@ namespace NzbDrone.Core.ThingiProvider
         private readonly IServiceProvider _container;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
+        private readonly object _definitionsLock = new ();
+        private Dictionary<int, TProviderDefinition> _definitions;
 
         protected readonly List<TProvider> _providers;
 
@@ -91,14 +93,23 @@ namespace NzbDrone.Core.ThingiProvider
             return Active().Select(GetInstance).ToList();
         }
 
+        // Definitions are shared, so only provider types whose definitions are not mutated in place
+        // and only written through this factory opt in.
+        protected virtual bool CacheDefinitions => false;
+
         public bool Exists(int id)
         {
-            return _providerRepository.Find(id) != null;
+            return Find(id) != null;
         }
 
         public TProviderDefinition Get(int id)
         {
-            return _providerRepository.Get(id);
+            if (!CacheDefinitions)
+            {
+                return _providerRepository.Get(id);
+            }
+
+            return CachedDefinitions().TryGetValue(id, out var definition) ? definition : _providerRepository.Get(id);
         }
 
         public IEnumerable<TProviderDefinition> Get(IEnumerable<int> ids)
@@ -108,12 +119,44 @@ namespace NzbDrone.Core.ThingiProvider
 
         public TProviderDefinition Find(int id)
         {
-            return _providerRepository.Find(id);
+            if (!CacheDefinitions)
+            {
+                return _providerRepository.Find(id);
+            }
+
+            return CachedDefinitions().GetValueOrDefault(id);
+        }
+
+        private Dictionary<int, TProviderDefinition> CachedDefinitions()
+        {
+            // Loading under the lock keeps a load that raced a write from being stored after the invalidation
+            lock (_definitionsLock)
+            {
+                return _definitions ??= _providerRepository.All().ToDictionary(d => d.Id);
+            }
+        }
+
+        protected void InvalidateDefinitions()
+        {
+            lock (_definitionsLock)
+            {
+                _definitions = null;
+            }
         }
 
         public virtual TProviderDefinition Create(TProviderDefinition definition)
         {
-            var result = _providerRepository.Insert(definition);
+            TProviderDefinition result;
+
+            try
+            {
+                result = _providerRepository.Insert(definition);
+            }
+            finally
+            {
+                InvalidateDefinitions();
+            }
+
             _eventAggregator.PublishEvent(new ProviderAddedEvent<TProvider>(result));
 
             return result;
@@ -121,13 +164,28 @@ namespace NzbDrone.Core.ThingiProvider
 
         public virtual void Update(TProviderDefinition definition)
         {
-            _providerRepository.Update(definition);
+            try
+            {
+                _providerRepository.Update(definition);
+            }
+            finally
+            {
+                InvalidateDefinitions();
+            }
+
             _eventAggregator.PublishEvent(new ProviderUpdatedEvent<TProvider>(definition));
         }
 
         public virtual IEnumerable<TProviderDefinition> Update(IEnumerable<TProviderDefinition> definitions)
         {
-            _providerRepository.UpdateMany(definitions.ToList());
+            try
+            {
+                _providerRepository.UpdateMany(definitions.ToList());
+            }
+            finally
+            {
+                InvalidateDefinitions();
+            }
 
             foreach (var definition in definitions)
             {
@@ -139,13 +197,28 @@ namespace NzbDrone.Core.ThingiProvider
 
         public void Delete(int id)
         {
-            _providerRepository.Delete(id);
+            try
+            {
+                _providerRepository.Delete(id);
+            }
+            finally
+            {
+                InvalidateDefinitions();
+            }
+
             _eventAggregator.PublishEvent(new ProviderDeletedEvent<TProvider>(id));
         }
 
         public void Delete(IEnumerable<int> ids)
         {
-            _providerRepository.DeleteMany(ids);
+            try
+            {
+                _providerRepository.DeleteMany(ids);
+            }
+            finally
+            {
+                InvalidateDefinitions();
+            }
 
             foreach (var id in ids)
             {
@@ -172,6 +245,7 @@ namespace NzbDrone.Core.ThingiProvider
             _logger.Debug("Initializing Providers. Count {0}", _providers.Count);
 
             RemoveMissingImplementations();
+            InvalidateDefinitions();
 
             InitializeProviders();
         }
