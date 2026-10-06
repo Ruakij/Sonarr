@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -40,6 +41,10 @@ namespace NzbDrone.Core.MediaCover
         // ImageSharp is slow on ARM (no hardware acceleration on mono yet)
         // So limit the number of concurrent resizing tasks
         private static SemaphoreSlim _semaphore = new SemaphoreSlim((int)Math.Ceiling(Environment.ProcessorCount / 2.0));
+
+        // Last write ticks per cover file, null when it does not exist. Every series list call maps all covers,
+        // and the file checks are slow on network storage; the cover files are only written by this service.
+        private readonly ConcurrentDictionary<string, long?> _lastWrites = new ();
 
         public MediaCoverService(IMediaCoverProxy mediaCoverProxy,
                                  IImageResizer resizer,
@@ -93,12 +98,27 @@ namespace NzbDrone.Core.MediaCover
 
                     mediaCover.Url = _configFileProvider.UrlBase + @"/MediaCover/" + seriesId + "/" + mediaCover.CoverType.ToString().ToLower() + GetExtension(mediaCover.CoverType);
 
-                    if (_diskProvider.FileExists(filePath))
+                    var lastWrite = _lastWrites.GetOrAdd(filePath, ReadLastWrite);
+
+                    if (lastWrite.HasValue)
                     {
-                        var lastWrite = _diskProvider.FileGetLastWrite(filePath);
-                        mediaCover.Url += "?lastWrite=" + lastWrite.Ticks;
+                        mediaCover.Url += "?lastWrite=" + lastWrite.Value;
                     }
                 }
+            }
+        }
+
+        private long? ReadLastWrite(string filePath)
+        {
+            return _diskProvider.FileExists(filePath) ? _diskProvider.FileGetLastWrite(filePath).Ticks : null;
+        }
+
+        // Overwriting instead of removing keeps a read that raced the write from storing the old value.
+        private void RefreshLastWrite(string filePath)
+        {
+            if (_lastWrites.ContainsKey(filePath))
+            {
+                _lastWrites[filePath] = ReadLastWrite(filePath);
             }
         }
 
@@ -170,7 +190,15 @@ namespace NzbDrone.Core.MediaCover
             var fileName = GetCoverPath(series.Id, cover.CoverType);
 
             _logger.Info("Downloading {0} for {1} {2}", cover.CoverType, series, cover.RemoteUrl);
-            _httpClient.DownloadFile(cover.RemoteUrl, fileName);
+
+            try
+            {
+                _httpClient.DownloadFile(cover.RemoteUrl, fileName);
+            }
+            finally
+            {
+                _lastWrites[fileName] = ReadLastWrite(fileName);
+            }
         }
 
         private void EnsureResizedCovers(Series series, MediaCover cover, bool forceResize)
@@ -234,6 +262,11 @@ namespace NzbDrone.Core.MediaCover
         {
             var updated = EnsureCovers(message.Series);
 
+            foreach (var coverType in Enum.GetValues<MediaCoverTypes>())
+            {
+                RefreshLastWrite(GetCoverPath(message.Series.Id, coverType));
+            }
+
             _eventAggregator.PublishEvent(new MediaCoversUpdatedEvent(message.Series, updated));
         }
 
@@ -242,6 +275,12 @@ namespace NzbDrone.Core.MediaCover
             foreach (var series in message.Series)
             {
                 var path = GetSeriesCoverPath(series.Id);
+
+                foreach (var coverType in Enum.GetValues<MediaCoverTypes>())
+                {
+                    _lastWrites.TryRemove(GetCoverPath(series.Id, coverType), out _);
+                }
+
                 if (_diskProvider.FolderExists(path))
                 {
                     _diskProvider.DeleteFolder(path, true);
