@@ -1,0 +1,13 @@
+.summary {
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.body {
+  max-width: 600px;
+}
+
+.message {
+  color: var(--helpTextColor);
+  font-size: 12px;
+}
