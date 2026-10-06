@@ -1567,6 +1567,28 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             InteractiveStatuses().Values.Should().AllBeEquivalentTo(IndexerSearchStatusType.Searched);
         }
 
+        [TestCase(false, 3)]
+        [TestCase(true, 5)]
+        public async Task should_send_cached_queries_of_remaining_indexers_again_only_on_refresh(bool refresh, int fetchCount)
+        {
+            GivenInteractiveSearchStore();
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10), (3, 0, "Third", 10));
+
+            (await InteractiveSearchTitles()).Should().BeEquivalentTo("First");
+
+            // Another search caches the queries of the remaining indexers
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchIndexersInPriorityOrder).Returns(false);
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, true);
+
+            var titles = await InteractiveSearchTitles(refresh, true);
+
+            fetched.Should().HaveCount(fetchCount);
+            titles.Should().BeEquivalentTo("First", "Second", "Third");
+        }
+
         [Test]
         public async Task should_search_all_indexers_again_on_refresh()
         {

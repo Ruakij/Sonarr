@@ -154,7 +154,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                     _onlyIndexerIds.Value = remainingIndexerIds;
 
-                    searches = Merge(previous.Searches, (await Run(search, CacheMode.Use)).Searches);
+                    searches = Merge(previous.Searches, (await Run(search, refresh ? CacheMode.Refresh : CacheMode.Use)).Searches);
                 }
 
                 SetInteractiveSearch(key, new InteractiveSearch { Searches = searches, SeriesId = seriesId });
