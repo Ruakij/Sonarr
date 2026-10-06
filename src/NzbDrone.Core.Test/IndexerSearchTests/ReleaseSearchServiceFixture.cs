@@ -42,6 +42,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             _mockIndexer = Mocker.GetMock<IIndexer>();
             _mockIndexer.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 1 });
             _mockIndexer.SetupGet(s => s.SupportsSearch).Returns(true);
+            GivenQueryKeys(_mockIndexer);
 
             Mocker.GetMock<IIndexerFactory>()
                   .Setup(s => s.AutomaticSearchEnabled(true))
@@ -1427,7 +1428,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public async Task should_count_http_requests_of_sent_queries()
+        public async Task should_count_and_time_every_http_request_of_sent_queries()
         {
             GivenInteractiveSearchStore();
             GivenIndexersWithPriority((1, 0, "Paged", 10));
@@ -1436,14 +1437,35 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Mock.Get(indexer).Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()))
                 .Returns<SingleEpisodeSearchCriteria>(c =>
                 {
-                    c.IndexerRequestCounts[1] = 3;
+                    c.AddRequestDuration(1, TimeSpan.FromMilliseconds(10));
+                    c.AddRequestDuration(1, TimeSpan.FromMilliseconds(20));
+                    c.AddRequestDuration(1, TimeSpan.FromMilliseconds(60));
 
                     return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
                 });
 
             await InteractiveSearchTitles();
 
-            Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.Single().QueryCount.Should().Be(3);
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.Single();
+
+            status.QueryCount.Should().Be(3);
+            status.MedianResponseMs.Should().Be(20);
+            status.HistoryCount.Should().Be(3);
+        }
+
+        [Test]
+        public async Task should_leave_out_indexers_without_a_query_for_the_episode()
+        {
+            GivenInteractiveSearchStore();
+            var fetched = GivenIndexersWithPriority((1, 0, "A", 10), (1, 0, "B", 10));
+            var indexers = Mocker.GetMock<IIndexerFactory>().Object.InteractiveSearchEnabled();
+            Mock.Get(indexers[1]).Setup(s => s.GetSearchQueryKey(It.IsAny<SearchCriteriaBase>())).Returns((string)null);
+
+            var titles = await InteractiveSearchTitles();
+
+            titles.Should().BeEquivalentTo("A");
+            fetched.Should().Equal("A");
+            Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.Select(i => i.Name).Should().Equal("A");
         }
 
         [Test]

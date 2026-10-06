@@ -197,8 +197,13 @@ namespace NzbDrone.Core.IndexerSearch
                     // An indexer with several queries shows its worst outcome, it counts as searched once one of its queries was sent
                     var worst = queries.MaxBy(s => s.Status);
 
-                    // Only sent queries have a response time
-                    var responseTimes = queries.Where(s => s.ResponseMs.HasValue).Select(s => s.ResponseMs.Value).ToList();
+                    // Indexers without a query for the item are left out
+                    if (worst == null)
+                    {
+                        return null;
+                    }
+
+                    var requestDurations = queries.Where(s => s.RequestDurationsMs != null).SelectMany(s => s.RequestDurationsMs).ToList();
                     var history = GetResponseTimeHistory(definition.Id);
 
                     return new IndexerSearchStatus
@@ -206,18 +211,19 @@ namespace NzbDrone.Core.IndexerSearch
                         IndexerId = definition.Id,
                         Name = definition.Name,
                         Priority = definition.Priority,
-                        Status = worst?.Status ?? IndexerSearchStatusType.Skipped,
+                        Status = worst.Status,
                         ReleaseCount = queries.Sum(s => s.ReleaseCount),
-                        Message = worst?.Message,
+                        Message = worst.Message,
                         CachedAt = queries.Where(s => s.Status == IndexerSearchStatusType.Cached).Min(s => s.CachedAt),
-                        QueryCount = responseTimes.Any() ? queries.Sum(s => s.QueryCount ?? 0) : null,
-                        MedianResponseMs = responseTimes.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(responseTimes)) : null,
+                        QueryCount = requestDurations.Any() ? requestDurations.Count : null,
+                        MedianResponseMs = requestDurations.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(requestDurations)) : null,
                         HistoryCount = history.Any() ? history.Count : null,
                         HistoryMedianMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(history)) : null,
                         HistoryLowMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Percentile(history, 2.5)) : null,
                         HistoryHighMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Percentile(history, 97.5)) : null
                     };
                 })
+                .Where(s => s != null)
                 .OrderBy(s => s.Priority)
                 .ThenBy(s => s.Name)
                 .ToList();
@@ -317,25 +323,21 @@ namespace NzbDrone.Core.IndexerSearch
                    (a is not SpecialEpisodeSearchCriteria special || special.EpisodeQueryTitles.SequenceEqual(((SpecialEpisodeSearchCriteria)b).EpisodeQueryTitles));
         }
 
-        // The key of an indexer query: the indexer and the requests it sends. Null leaves the query uncached
-        private string GetQueryKey(IIndexer indexer, SearchCriteriaBase criteria)
+        // The key of an indexer query: the indexer and the requests it sends. A null key leaves the query uncached,
+        // an indexer without a query sends no request for the item
+        private (bool HasQuery, string Key) GetQueryKey(IIndexer indexer, SearchCriteriaBase criteria)
         {
-            if (_configService.SearchResultCacheLifetime <= 0)
-            {
-                return null;
-            }
-
             try
             {
                 var key = indexer.GetSearchQueryKey(criteria);
 
-                return key == null ? null : $"{indexer.Definition.Id}:{key}";
+                return key == null ? (false, null) : (true, $"{indexer.Definition.Id}:{key}");
             }
             catch (Exception ex)
             {
                 // Building the requests can fail like sending them, the query is then sent and reports the failure
                 _logger.Debug(ex, "Unable to build the query of {0} for {1}", indexer.Definition.Name, criteria);
-                return null;
+                return (true, null);
             }
         }
 
@@ -845,7 +847,12 @@ namespace NzbDrone.Core.IndexerSearch
                 indexers = indexers.Where(i => onlyIndexerIds.Contains(i.Definition.Id)).ToList();
             }
 
-            var queryKeys = indexers.ToDictionary(i => i.Definition.Id, i => GetQueryKey(i, criteriaBase));
+            var allQueryKeys = indexers.ToDictionary(i => i.Definition.Id, i => GetQueryKey(i, criteriaBase));
+
+            // Indexers that send no request for the item are left out, they neither search nor show up in the status
+            indexers = indexers.Where(i => allQueryKeys[i.Definition.Id].HasQuery).ToList();
+
+            var queryKeys = indexers.ToDictionary(i => i.Definition.Id, i => allQueryKeys[i.Definition.Id].Key);
 
             var cachedQueries = cacheMode == CacheMode.Refresh
                 ? new Dictionary<int, CachedQuery>()
@@ -1091,33 +1098,39 @@ namespace NzbDrone.Core.IndexerSearch
 
                 if (cachedQueries.TryGetValue(id, out var cachedQuery))
                 {
-                    return GetStatus(indexer, IndexerSearchStatusType.Cached, reports, criteriaBase, cachedAt: cachedQuery.FetchedAt);
+                    return GetStatus(indexer, IndexerSearchStatusType.Cached, reports, cachedAt: cachedQuery.FetchedAt);
                 }
 
                 if (g >= searchedGroups || !indexerIdsToSearch.Contains(id))
                 {
-                    return GetStatus(indexer, IndexerSearchStatusType.Skipped, reports, criteriaBase);
+                    return GetStatus(indexer, IndexerSearchStatusType.Skipped, reports);
                 }
 
-                var responseMs = criteriaBase.IndexerResponseTimes.TryGetValue(id, out var responseTime) ? responseTime.TotalMilliseconds : (double?)null;
-
+                // A query not waited for still runs, its requests are not part of the search
                 if (!answeredIndexerIds.Contains(id))
                 {
-                    return GetStatus(indexer, IndexerSearchStatusType.NotWaitedFor, reports, criteriaBase, responseMs: responseMs);
+                    return GetStatus(indexer, IndexerSearchStatusType.NotWaitedFor, reports);
                 }
+
+                var requestDurations = GetRequestDurations(criteriaBase, id);
 
                 if (criteriaBase.IndexerFailures.TryGetValue(id, out var failure))
                 {
                     var timedOut = failure is TaskCanceledException or TimeoutException or WebException { Status: WebExceptionStatus.Timeout };
 
-                    return GetStatus(indexer, timedOut ? IndexerSearchStatusType.TimedOut : IndexerSearchStatusType.Failed, reports, criteriaBase, failure.Message, responseMs);
+                    return GetStatus(indexer, timedOut ? IndexerSearchStatusType.TimedOut : IndexerSearchStatusType.Failed, reports, failure.Message, requestDurations);
                 }
 
-                return GetStatus(indexer, IndexerSearchStatusType.Searched, reports, criteriaBase, responseMs: responseMs);
+                return GetStatus(indexer, IndexerSearchStatusType.Searched, reports, requestDurations: requestDurations);
             })).ToList();
         }
 
-        private static IndexerSearchStatus GetStatus(IIndexer indexer, IndexerSearchStatusType status, List<ReleaseInfo> reports, SearchCriteriaBase criteriaBase, string message = null, double? responseMs = null, DateTime? cachedAt = null)
+        private static List<double> GetRequestDurations(SearchCriteriaBase criteriaBase, int indexerId)
+        {
+            return criteriaBase.IndexerRequestDurations.TryGetValue(indexerId, out var durations) ? durations.Select(d => d.TotalMilliseconds).ToList() : new List<double>();
+        }
+
+        private static IndexerSearchStatus GetStatus(IIndexer indexer, IndexerSearchStatusType status, List<ReleaseInfo> reports, string message = null, List<double> requestDurations = null, DateTime? cachedAt = null)
         {
             var id = indexer.Definition.Id;
 
@@ -1129,10 +1142,8 @@ namespace NzbDrone.Core.IndexerSearch
                 Status = status,
                 ReleaseCount = reports.Count(r => r.IndexerId == id),
                 Message = message,
-                ResponseMs = responseMs,
-
-                // Indexers that send no HTTP requests of their own count as one request per query
-                QueryCount = responseMs.HasValue ? criteriaBase.IndexerRequestCounts.GetValueOrDefault(id, 1) : null,
+                RequestDurationsMs = requestDurations,
+                QueryCount = requestDurations?.Count,
                 CachedAt = cachedAt
             };
         }
@@ -1162,12 +1173,16 @@ namespace NzbDrone.Core.IndexerSearch
             }
             finally
             {
-                criteriaBase.IndexerResponseTimes[id] = stopwatch.Elapsed;
+                // Indexers that send no HTTP requests of their own count as one request per query
+                if (!criteriaBase.IndexerRequestDurations.ContainsKey(id))
+                {
+                    criteriaBase.AddRequestDuration(id, stopwatch.Elapsed);
+                }
 
-                // A failed query is no response time of the indexer
+                // Indexers report most failures instead of throwing them, queries not waited for still finish and count for the history
                 if (!criteriaBase.IndexerFailures.ContainsKey(id))
                 {
-                    AddResponseTime(id, stopwatch.Elapsed.TotalMilliseconds);
+                    GetRequestDurations(criteriaBase, id).ForEach(d => AddResponseTime(id, d));
                 }
             }
 

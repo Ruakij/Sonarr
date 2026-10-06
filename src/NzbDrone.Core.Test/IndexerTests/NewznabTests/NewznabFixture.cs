@@ -128,7 +128,7 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
             var requestCount = Mocker.GetMock<IHttpClient>().Invocations.Count(i => i.Method.Name == nameof(IHttpClient.ExecuteAsync));
 
             requestCount.Should().BeGreaterThan(1);
-            criteria.IndexerRequestCounts[5].Should().Be(requestCount);
+            criteria.IndexerRequestDurations[5].Should().HaveCount(requestCount);
         }
 
         [Test]
