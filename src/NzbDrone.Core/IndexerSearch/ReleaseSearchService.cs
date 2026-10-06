@@ -278,7 +278,7 @@ namespace NzbDrone.Core.IndexerSearch
 
         private CachedSearchResult FindCachedSearch(CachedSearch entry, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
         {
-            if (entry == null || !episodes.All(e => entry.EpisodeIds.Contains(e.Id)))
+            if (entry == null || !entry.HasAnswers || !episodes.All(e => entry.EpisodeIds.Contains(e.Id)))
             {
                 return null;
             }
@@ -386,7 +386,12 @@ namespace NzbDrone.Core.IndexerSearch
             {
                 // Cached<T> only evicts expired entries on lookup, so drop them here to keep the cache bounded
                 _searchResultCache.ClearExpired();
-                _searchResultCache.Set(key, entry, TimeSpan.FromMinutes(lifetime));
+
+                // Without an answer of any indexer there is nothing to serve, the next search has to ask the indexers again
+                if (entry.HasAnswers)
+                {
+                    _searchResultCache.Set(key, entry, TimeSpan.FromMinutes(lifetime));
+                }
             }
 
             return (decisions, entry);
@@ -1132,6 +1137,8 @@ namespace NzbDrone.Core.IndexerSearch
             public HashSet<int> EpisodeIds { get; set; }
 
             public List<Search> Searches { get; } = new ();
+
+            public bool HasAnswers => Searches.Any(s => s.IndexerIds.Any());
 
             // Adds a search of some indexers to this one, their new results and statuses replace the earlier ones
             public CachedSearch Merge(CachedSearch remaining)

@@ -280,6 +280,29 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public void should_not_cache_search_no_indexer_answered()
+        {
+            _indexer.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).ThrowsAsync(new Exception("Indexer failed"));
+
+            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
+
+            GetCache().Count.Should().Be(0);
+
+            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
+
+            VerifySearchCount(2);
+            ExceptionVerification.ExpectedErrors(2);
+        }
+
+        [Test]
+        public void should_not_serve_cached_search_no_indexer_answered()
+        {
+            GetCache().Set("episode:1", new ReleaseSearchService.CachedSearch { EpisodeIds = new HashSet<int> { 1 } });
+
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Should().BeNull();
+        }
+
+        [Test]
         public void should_clear_cache_when_lifetime_is_zero()
         {
             SearchAndFail("guid1");
