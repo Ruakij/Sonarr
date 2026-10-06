@@ -131,11 +131,11 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EarlySearchReturnMinimumWait", value); }
         }
 
-        public int EpisodeSearchConcurrency
+        public int SearchConcurrency
         {
-            get { return GetValueInt("EpisodeSearchConcurrency", 1); }
+            get { return GetValueInt("SearchConcurrency", GetValueInt("EpisodeSearchConcurrency", 1)); }
 
-            set { SetValue("EpisodeSearchConcurrency", value); }
+            set { SetValue("SearchConcurrency", value); }
         }
 
         public int SearchResultCacheLifetime

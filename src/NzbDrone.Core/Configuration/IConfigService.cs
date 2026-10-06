@@ -55,7 +55,7 @@ namespace NzbDrone.Core.Configuration
         int MaximumSize { get; set; }
         bool EarlySearchReturn { get; set; }
         int EarlySearchReturnMinimumWait { get; set; }
-        int EpisodeSearchConcurrency { get; set; }
+        int SearchConcurrency { get; set; }
         int SearchResultCacheLifetime { get; set; }
         int MinimumAge { get; set; }
 
