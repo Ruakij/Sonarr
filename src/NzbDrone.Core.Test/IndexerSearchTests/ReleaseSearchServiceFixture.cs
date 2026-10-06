@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using FizzWare.NBuilder;
@@ -686,7 +687,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             {
                 var mock = new Mock<IIndexer>();
 
-                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Priority = indexer.Priority });
+                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Name = indexer.Title, Priority = indexer.Priority });
 
                 Func<Task<IList<ReleaseInfo>>> fetch = () =>
                 {
@@ -1263,6 +1264,132 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Returns(_xemEpisodes.First());
 
             Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
+        }
+
+        private void GivenInteractiveSearchStore()
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+
+            GivenSeasonEpisodes();
+
+            Mocker.GetMock<IEpisodeService>()
+                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
+                  .Returns(_xemEpisodes.First());
+        }
+
+        private async Task<List<string>> InteractiveSearchTitles(bool refresh = false, bool searchRemaining = false)
+        {
+            var result = await Subject.InteractiveEpisodeSearch(_xemEpisodes.First().Id, refresh, searchRemaining);
+
+            return result.Decisions.Select(d => d.RemoteEpisode.Release.Title).ToList();
+        }
+
+        private Dictionary<string, IndexerSearchStatusType> InteractiveStatuses()
+        {
+            return Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.ToDictionary(i => i.Name, i => i.Status);
+        }
+
+        [Test]
+        public void should_return_empty_status_without_interactive_search()
+        {
+            GivenInteractiveSearchStore();
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id);
+
+            status.CachedAt.Should().BeNull();
+            status.Indexers.Should().BeEmpty();
+        }
+
+        [Test]
+        public async Task should_report_searched_and_skipped_indexers_of_interactive_search()
+        {
+            GivenInteractiveSearchStore();
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            GivenIndexersWithPriority((1, 0, "First", 10), (1, 50, "Other", 5), (2, 0, "Second", 10));
+
+            await InteractiveSearchTitles();
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id);
+
+            status.CachedAt.Should().BeNull();
+            status.Indexers.Select(i => i.Name).Should().Equal("First", "Other", "Second");
+            status.Indexers.Select(i => i.Status).Should().Equal(IndexerSearchStatusType.Searched, IndexerSearchStatusType.Searched, IndexerSearchStatusType.Skipped);
+            status.Indexers.Select(i => i.ReleaseCount).Should().Equal(1, 1, 0);
+        }
+
+        [Test]
+        public async Task should_report_failed_and_timed_out_indexers_and_search_them_again_when_searching_remaining()
+        {
+            GivenInteractiveSearchStore();
+            var fetched = GivenIndexersWithPriority((1, 0, "A", 10), (1, 0, "B", 10), (1, 0, "C", 10));
+            var indexers = Mocker.GetMock<IIndexerFactory>().Object.InteractiveSearchEnabled();
+            Mock.Get(indexers[1]).Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).ThrowsAsync(new Exception("Indexer failed"));
+            Mock.Get(indexers[2]).Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).ThrowsAsync(new WebException("Http request timed out", WebExceptionStatus.Timeout));
+
+            await InteractiveSearchTitles();
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id);
+
+            status.Indexers.Select(i => i.Status).Should().Equal(IndexerSearchStatusType.Searched, IndexerSearchStatusType.Failed, IndexerSearchStatusType.TimedOut);
+            status.Indexers.Single(i => i.Name == "B").Message.Should().Be("Indexer failed");
+
+            await InteractiveSearchTitles(searchRemaining: true);
+
+            fetched.Should().Equal("A");
+            Mock.Get(indexers[1]).Verify(v => v.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()), Times.Exactly(2));
+            Mock.Get(indexers[2]).Verify(v => v.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()), Times.Exactly(2));
+            ExceptionVerification.ExpectedErrors(4);
+        }
+
+        [Test]
+        public async Task should_report_cached_indexers_when_interactive_search_is_served_from_cache()
+        {
+            GivenInteractiveSearchStore();
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+            var titles = await InteractiveSearchTitles();
+
+            fetched.Should().HaveCount(2);
+            titles.Should().BeEquivalentTo("First", "Second");
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id);
+
+            status.CachedAt.Should().NotBeNull();
+            status.Indexers.Select(i => i.Status).Should().AllBeEquivalentTo(IndexerSearchStatusType.Cached);
+        }
+
+        [Test]
+        public async Task should_search_only_remaining_indexers_and_merge_results()
+        {
+            GivenInteractiveSearchStore();
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10), (3, 0, "Third", 10));
+
+            (await InteractiveSearchTitles()).Should().BeEquivalentTo("First");
+
+            var titles = await InteractiveSearchTitles(searchRemaining: true);
+
+            fetched.Should().BeEquivalentTo("First", "Second", "Third");
+            titles.Should().BeEquivalentTo("First", "Second", "Third");
+            InteractiveStatuses().Values.Should().AllBeEquivalentTo(IndexerSearchStatusType.Searched);
+        }
+
+        [Test]
+        public async Task should_search_all_indexers_again_on_refresh()
+        {
+            GivenInteractiveSearchStore();
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await InteractiveSearchTitles();
+            await InteractiveSearchTitles(refresh: true);
+
+            fetched.Should().HaveCount(4);
+            InteractiveStatuses().Values.Should().AllBeEquivalentTo(IndexerSearchStatusType.Searched);
         }
 
         private static int InterlockedMax(ref int target, int value)

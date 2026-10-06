@@ -6141,6 +6141,14 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "searchRemaining",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -6153,6 +6161,67 @@
                   "items": {
                     "$ref": "#/components/schemas/ReleaseResource"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/release/searchstatus": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "parameters": [
+          {
+            "name": "seriesId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "episodeId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "seasonNumber",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "searchRemaining",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSearchStatusResource"
                 }
               }
             }
@@ -9607,6 +9676,64 @@
           "downloadClientId": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IndexerSearchStatusResource": {
+        "type": "object",
+        "properties": {
+          "indexerId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IndexerSearchStatusType"
+          },
+          "releaseCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "IndexerSearchStatusType": {
+        "enum": [
+          "searched",
+          "cached",
+          "skipped",
+          "notWaitedFor",
+          "failed",
+          "timedOut"
+        ],
+        "type": "string"
+      },
+      "ReleaseSearchStatusResource": {
+        "type": "object",
+        "properties": {
+          "cachedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "indexers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexerSearchStatusResource"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false

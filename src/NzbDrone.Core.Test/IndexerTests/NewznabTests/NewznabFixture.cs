@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -10,9 +11,11 @@ using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.Newznab;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
+using NzbDrone.Core.Tv;
 using NzbDrone.Test.Common;
 
 namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
@@ -66,6 +69,28 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
             releaseInfo.Indexer.Should().Be(Subject.Definition.Name);
             releaseInfo.PublishDate.Should().Be(DateTime.Parse("2012/02/27 16:09:39"));
             releaseInfo.Size.Should().Be(1183105773);
+        }
+
+        [Test]
+        public async Task should_report_search_failure_to_search_criteria()
+        {
+            Mocker.GetMock<IHttpClient>()
+                .Setup(o => o.ExecuteAsync(It.IsAny<HttpRequest>()))
+                .ThrowsAsync(new WebException("Http request timed out", WebExceptionStatus.Timeout));
+
+            var criteria = new SingleEpisodeSearchCriteria
+            {
+                Series = new Series { Title = "Series", TvdbId = 1 },
+                SceneTitles = new List<string> { "Series" },
+                Episodes = new List<Episode> { new Episode() },
+                SeasonNumber = 1,
+                EpisodeNumber = 1
+            };
+
+            var releases = await Subject.Fetch(criteria);
+
+            releases.Should().BeEmpty();
+            criteria.IndexerFailures[5].Should().BeOfType<WebException>();
         }
 
         [Test]
