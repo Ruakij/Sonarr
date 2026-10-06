@@ -1827,6 +1827,8 @@
   "SearchForMonitoredEpisodes": "Search for monitored episodes",
   "SearchForMonitoredEpisodesSeason": "Search for monitored episodes in this season",
   "SearchForQuery": "Search for {query}",
+  "SearchIndexersInPriorityOrder": "Search Indexers in Priority Order",
+  "SearchIndexersInPriorityOrderHelpText": "Search one indexer priority group at a time and stop once a good enough release is found. Indexers up to the Early Search Return Required Priority form the first group.",
   "SearchIsNotSupportedWithThisIndexer": "Search is not supported with this indexer",
   "SearchMonitored": "Search Monitored",
   "SearchResultCacheLifetime": "Search Result Cache Lifetime",

@@ -147,6 +147,22 @@ function IndexerOptions(props) {
                 null
             }
 
+            {
+              settings.earlySearchReturn.value ?
+                <FormGroup>
+                  <FormLabel>{translate('SearchIndexersInPriorityOrder')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="searchIndexersInPriorityOrder"
+                    helpText={translate('SearchIndexersInPriorityOrderHelpText')}
+                    onChange={onInputChange}
+                    {...settings.searchIndexersInPriorityOrder}
+                  />
+                </FormGroup> :
+                null
+            }
+
             <FormGroup
               advancedSettings={advancedSettings}
               isAdvanced={true}
