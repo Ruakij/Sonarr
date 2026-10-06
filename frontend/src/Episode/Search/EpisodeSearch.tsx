@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import AppState from 'App/State/AppState';
 import * as commandNames from 'Commands/commandNames';
@@ -43,8 +43,10 @@ function EpisodeSearch({
     setIsInteractiveSearchOpen(true);
   }, []);
 
+  const searchPayload = useMemo(() => ({ episodeId }), [episodeId]);
+
   if (isInteractiveSearchOpen) {
-    return <InteractiveSearch type="episode" searchPayload={{ episodeId }} />;
+    return <InteractiveSearch type="episode" searchPayload={searchPayload} />;
   }
 
   return (
