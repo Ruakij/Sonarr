@@ -130,15 +130,15 @@ function IndexerOptions(props) {
               advancedSettings={advancedSettings}
               isAdvanced={true}
             >
-              <FormLabel>{translate('EpisodeSearchConcurrency')}</FormLabel>
+              <FormLabel>{translate('SearchConcurrency')}</FormLabel>
 
               <FormInputGroup
                 type={inputTypes.NUMBER}
-                name="episodeSearchConcurrency"
+                name="searchConcurrency"
                 min={1}
-                helpText={translate('EpisodeSearchConcurrencyHelpText')}
+                helpText={translate('SearchConcurrencyHelpText')}
                 onChange={onInputChange}
-                {...settings.episodeSearchConcurrency}
+                {...settings.searchConcurrency}
               />
             </FormGroup>
 

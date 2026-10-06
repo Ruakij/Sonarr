@@ -65,7 +65,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var orderedGroups = groups.OrderBy(g => g.Episodes.Min(e => e.LastSearchTime ?? DateTime.MinValue));
 
-            downloadedCount = await SearchAndProcess(orderedGroups, _configService.EpisodeSearchConcurrency, _processDownloadDecisions, async group =>
+            downloadedCount = await SearchAndProcess(orderedGroups, _configService.SearchConcurrency, _processDownloadDecisions, async group =>
             {
                 var seriesId = group.SeriesId;
                 var seasonNumber = group.SeasonNumber;

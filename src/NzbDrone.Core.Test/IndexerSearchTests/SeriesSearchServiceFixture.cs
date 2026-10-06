@@ -97,7 +97,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             _series.Seasons = Enumerable.Range(1, seasons).Reverse().Select(n => new Season { SeasonNumber = n, Monitored = true }).ToList();
 
             Mocker.GetMock<IConfigService>()
-                  .SetupGet(s => s.EpisodeSearchConcurrency)
+                  .SetupGet(s => s.SearchConcurrency)
                   .Returns(concurrency);
 
             Mocker.GetMock<ISearchForReleases>()

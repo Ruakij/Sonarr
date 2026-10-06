@@ -9488,7 +9488,7 @@
             "type": "integer",
             "format": "int32"
           },
-          "episodeSearchConcurrency": {
+          "searchConcurrency": {
             "type": "integer",
             "format": "int32"
           },
