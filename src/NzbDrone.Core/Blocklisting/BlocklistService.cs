@@ -85,7 +85,7 @@ namespace NzbDrone.Core.Blocklisting
 
         private List<Blocklist> GetSeriesBlocklist(int seriesId)
         {
-            return DecisionRunCache.GetOrAdd("BlocklistBySeries", seriesId, () => _blocklistRepository.BlocklistedBySeries(seriesId));
+            return DecisionRunCache.Get($"blocklist:{seriesId}", () => _blocklistRepository.BlocklistedBySeries(seriesId));
         }
 
         public bool BlocklistedTorrentHash(int seriesId, string hash)
