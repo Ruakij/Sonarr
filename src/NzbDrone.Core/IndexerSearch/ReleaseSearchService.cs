@@ -12,6 +12,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
@@ -47,6 +48,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IMakeDownloadDecision _makeDownloadDecision;
         private readonly IConfigService _configService;
         private readonly IUpgradableSpecification _upgradableSpecification;
+        private readonly ICustomFormatCalculationService _formatService;
         private readonly ICached<CachedQuery> _queryCache;
         private readonly ICached<InteractiveSearch> _interactiveSearches;
         private readonly AsyncLocal<SearchRun> _currentSearch = new AsyncLocal<SearchRun>();
@@ -70,6 +72,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 IConfigService configService,
                                 ICacheManager cacheManager,
                                 IUpgradableSpecification upgradableSpecification,
+                                ICustomFormatCalculationService formatService,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -79,6 +82,7 @@ namespace NzbDrone.Core.IndexerSearch
             _makeDownloadDecision = makeDownloadDecision;
             _configService = configService;
             _upgradableSpecification = upgradableSpecification;
+            _formatService = formatService;
             _queryCache = cacheManager.GetCache<CachedQuery>(GetType(), "searchQueries");
             _interactiveSearches = cacheManager.GetCache<InteractiveSearch>(GetType(), "interactiveSearches");
             _logger = logger;
@@ -901,6 +905,13 @@ namespace NzbDrone.Core.IndexerSearch
                         break;
                     }
 
+                    // No release is approved when the existing files meet the cutoff, lower priorities could not find an upgrade either
+                    if (i > 0 && AllEpisodesMeetCutoff(criteriaBase))
+                    {
+                        _logger.ProgressInfo("Existing files of {0} meet the cutoff, skipping {1} indexers of lower priority", criteriaBase, groups.Skip(i).Sum(g => g.Count(indexer => indexerIdsToSearch.Contains(indexer.Definition.Id))));
+                        break;
+                    }
+
                     var group = groups[i];
 
                     searchedGroups++;
@@ -1087,6 +1098,18 @@ namespace NzbDrone.Core.IndexerSearch
             return decision.Approved &&
                    episodes.All(e => remoteEpisode.Episodes.Any(r => r.Id == e.Id)) &&
                    !_upgradableSpecification.CutoffNotMet(remoteEpisode.Series.QualityProfile.Value, remoteEpisode.ParsedEpisodeInfo.Quality, remoteEpisode.CustomFormats);
+        }
+
+        private bool AllEpisodesMeetCutoff(SearchCriteriaBase criteriaBase)
+        {
+            var qualityProfile = criteriaBase.Series.QualityProfile.Value;
+
+            return criteriaBase.Episodes.Any() && criteriaBase.Episodes.All(e =>
+            {
+                var file = e.HasFile ? e.EpisodeFile?.Value : null;
+
+                return file != null && !_upgradableSpecification.CutoffNotMet(qualityProfile, file.Quality, _formatService.ParseCustomFormat(file, criteriaBase.Series));
+            });
         }
 
         // Indexers of groups never reached and those a cache-only search did not send were skipped, those still running when the search returned were not waited for

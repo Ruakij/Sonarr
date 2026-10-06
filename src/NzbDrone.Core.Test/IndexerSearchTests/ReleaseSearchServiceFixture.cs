@@ -14,12 +14,14 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DataAugmentation.Scene;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
@@ -1374,6 +1376,60 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             status.Indexers.Select(i => i.Name).Should().Equal("First", "Other", "Second");
             status.Indexers.Select(i => i.Status).Should().Equal(IndexerSearchStatusType.Searched, IndexerSearchStatusType.Searched, IndexerSearchStatusType.Skipped);
             status.Indexers.Select(i => i.ReleaseCount).Should().Equal(1, 1, 0);
+        }
+
+        private void GivenEpisodeFile(Quality quality)
+        {
+            var episode = _xemEpisodes.First();
+
+            episode.EpisodeFileId = 1;
+            episode.EpisodeFile = new LazyLoaded<EpisodeFile>(new EpisodeFile { Id = 1, Quality = new QualityModel(quality) });
+
+            Mocker.GetMock<ICustomFormatCalculationService>()
+                  .Setup(s => s.ParseCustomFormat(It.IsAny<EpisodeFile>(), It.IsAny<Series>()))
+                  .Returns(new List<CustomFormat>());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task should_skip_lower_priority_groups_when_existing_file_meets_cutoff(bool requiredFromCache)
+        {
+            GivenInteractiveSearchStore();
+            GivenQueryCache();
+            GivenEarlySearchReturn(0, 5);
+            GivenSearchIndexersInPriorityOrder();
+            GivenEpisodeFile(Quality.HDTV720p);
+
+            if (requiredFromCache)
+            {
+                GivenIndexersWithPriority((5, 0, "Rejected", 10));
+                await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+            }
+
+            var fetched = GivenIndexersWithPriority((5, 0, "Rejected", 10), (10, 0, "Lower", 10));
+
+            await InteractiveSearchTitles();
+
+            fetched.Should().NotContain("Lower");
+            fetched.Should().HaveCount(requiredFromCache ? 0 : 1);
+            InteractiveStatuses()["Rejected"].Should().Be(requiredFromCache ? IndexerSearchStatusType.Cached : IndexerSearchStatusType.Searched);
+            InteractiveStatuses()["Lower"].Should().Be(IndexerSearchStatusType.Skipped);
+        }
+
+        [Test]
+        public async Task should_search_lower_priority_groups_when_existing_file_does_not_meet_cutoff()
+        {
+            GivenInteractiveSearchStore();
+            GivenEarlySearchReturn(0, 5);
+            GivenSearchIndexersInPriorityOrder();
+            GivenEpisodeFile(Quality.SDTV);
+
+            var fetched = GivenIndexersWithPriority((5, 0, "Rejected", 10), (10, 0, "Lower", 10));
+
+            await InteractiveSearchTitles();
+
+            fetched.Should().Equal("Rejected", "Lower");
+            InteractiveStatuses()["Lower"].Should().Be(IndexerSearchStatusType.Searched);
         }
 
         [Test]
