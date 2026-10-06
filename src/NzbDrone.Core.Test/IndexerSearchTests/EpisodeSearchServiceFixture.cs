@@ -318,6 +318,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             RedownloadFailed();
 
             VerifySearchCount(2);
+            GetCache().Count.Should().Be(0);
         }
 
         [Test]

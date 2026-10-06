@@ -351,7 +351,13 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var lifetime = _configService.SearchResultCacheLifetime;
 
-            if (key == null || lifetime <= 0)
+            if (lifetime <= 0)
+            {
+                _queryCache.Clear();
+                return;
+            }
+
+            if (key == null)
             {
                 return;
             }
