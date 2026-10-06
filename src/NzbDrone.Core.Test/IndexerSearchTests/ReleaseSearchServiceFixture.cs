@@ -944,7 +944,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetSeries(_xemSeries.Id))
                   .Returns(_xemSeries);
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast");
+            GetQueryCache().Values.SelectMany(q => q.Releases).Select(r => r.Title).Should().BeEquivalentTo("Fast");
         }
 
         [Test]
@@ -972,7 +972,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
                   .Returns(_xemEpisodes.First());
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast", "Slow");
+            (await Subject.EpisodeSearch(_xemEpisodes.First(), true, false)).Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast", "Slow");
             fetched.Should().HaveCount(2);
         }
 
@@ -1094,7 +1094,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             await AnimeSeasonSearchTitles();
 
-            Subject.CachedSeasonSearch(_xemSeries.Id, 1).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Pack", "Episode 1", "Episode 2", "Episode 3");
+            (await AnimeSeasonSearchTitles()).Should().BeEquivalentTo("Pack", "Episode 1", "Episode 2", "Episode 3");
             episodeSearches.Should().HaveCount(3);
         }
 
@@ -1297,19 +1297,16 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             GivenEarlySearchReturn(0);
             GivenSearchIndexersInPriorityOrder();
-            GivenIndexersWithPriority((1, 0, "First", firstScore), (2, 0, "Second", 10));
+            var fetched = GivenIndexersWithPriority((1, 0, "First", firstScore), (2, 0, "Second", 10));
 
             await SearchTitles();
 
-            Mocker.GetMock<IEpisodeService>()
-                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
-                  .Returns(_xemEpisodes.First());
-
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo(titles);
+            (await Subject.EpisodeSearch(_xemEpisodes.First(), true, false)).Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo(titles);
+            fetched.Should().BeEquivalentTo(titles);
         }
 
         [Test]
-        public async Task should_serve_answered_queries_when_first_group_was_cut_short()
+        public async Task should_cache_answered_queries_when_first_group_was_cut_short()
         {
             GivenQueryCache();
 
@@ -1323,7 +1320,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
                   .Returns(_xemEpisodes.First());
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("First");
+            GetQueryCache().Values.SelectMany(q => q.Releases).Select(r => r.Title).Should().BeEquivalentTo("First");
         }
 
         private void GivenInteractiveSearchStore()
