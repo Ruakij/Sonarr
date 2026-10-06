@@ -314,4 +314,4 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
   );
 }
 
-export default InteractiveSearchRow;
+export default React.memo(InteractiveSearchRow);
