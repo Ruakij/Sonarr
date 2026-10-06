@@ -170,63 +170,48 @@ namespace Sonarr.Api.V3.Indexers
 
         [HttpGet]
         [Produces("application/json")]
-        public async Task<List<ReleaseResource>> GetReleases(int? seriesId, int? episodeId, int? seasonNumber, bool refresh = false)
+        public async Task<List<ReleaseResource>> GetReleases(int? seriesId, int? episodeId, int? seasonNumber, bool refresh = false, bool searchRemaining = false)
         {
             if (episodeId.HasValue)
             {
-                return await GetEpisodeReleases(episodeId.Value, refresh);
+                return await InteractiveSearch("Episode", () => _releaseSearchService.InteractiveEpisodeSearch(episodeId.Value, refresh, searchRemaining));
             }
 
             if (seriesId.HasValue && seasonNumber.HasValue)
             {
-                return await GetSeasonReleases(seriesId.Value, seasonNumber.Value, refresh);
+                return await InteractiveSearch("Season", () => _releaseSearchService.InteractiveSeasonSearch(seriesId.Value, seasonNumber.Value, refresh, searchRemaining));
             }
 
             return await GetRss();
         }
 
-        private async Task<List<ReleaseResource>> GetEpisodeReleases(int episodeId, bool refresh)
+        [HttpGet("searchstatus")]
+        [Produces("application/json")]
+        public ReleaseSearchStatusResource GetSearchStatus(int? seriesId, int? episodeId, int? seasonNumber, bool refresh = false, bool searchRemaining = false)
         {
-            try
-            {
-                var cached = refresh ? null : _releaseSearchService.CachedEpisodeSearch(episodeId, true);
+            InteractiveSearchStatus status;
 
-                if (cached != null)
-                {
-                    return MapCachedDecisions(cached);
-                }
-
-                var decisions = await _releaseSearchService.EpisodeSearch(episodeId, true, true, false);
-                var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
-
-                return MapDecisions(prioritizedDecisions);
-            }
-            catch (SearchFailedException ex)
+            if (episodeId.HasValue)
             {
-                throw new NzbDroneClientException(HttpStatusCode.BadRequest, ex.Message);
+                status = _releaseSearchService.InteractiveEpisodeSearchStatus(episodeId.Value);
             }
-            catch (Exception ex)
+            else if (seriesId.HasValue && seasonNumber.HasValue)
             {
-                _logger.Error(ex, "Episode search failed: " + ex.Message);
-                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+                status = _releaseSearchService.InteractiveSeasonSearchStatus(seriesId.Value, seasonNumber.Value);
             }
+            else
+            {
+                status = new InteractiveSearchStatus();
+            }
+
+            return status.ToResource();
         }
 
-        private async Task<List<ReleaseResource>> GetSeasonReleases(int seriesId, int seasonNumber, bool refresh)
+        private async Task<List<ReleaseResource>> InteractiveSearch(string type, Func<Task<CachedSearchResult>> search)
         {
             try
             {
-                var cached = refresh ? null : _releaseSearchService.CachedSeasonSearch(seriesId, seasonNumber, true);
-
-                if (cached != null)
-                {
-                    return MapCachedDecisions(cached);
-                }
-
-                var decisions = await _releaseSearchService.SeasonSearch(seriesId, seasonNumber, false, false, true, true, false);
-                var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
-
-                return MapDecisions(prioritizedDecisions);
+                return MapCachedDecisions(await search());
             }
             catch (SearchFailedException ex)
             {
@@ -234,7 +219,7 @@ namespace Sonarr.Api.V3.Indexers
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Season search failed: " + ex.Message);
+                _logger.Error(ex, type + " search failed: " + ex.Message);
                 throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
             }
         }
