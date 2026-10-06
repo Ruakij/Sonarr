@@ -589,6 +589,8 @@
   "EarlySearchReturnHelpText": "Automatic searches stop waiting for slow indexers once a release has been found that covers all searched episodes and meets the quality profile cutoff and cutoff format score. Interactive searches always wait for all indexers",
   "EarlySearchReturnMinimumWait": "Early Search Return Minimum Wait",
   "EarlySearchReturnMinimumWaitHelpText": "Minimum time since the search started before returning early, indexers answering within it may still deliver a better release",
+  "EarlySearchReturnRequiredPriority": "Early Search Return Required Priority",
+  "EarlySearchReturnRequiredPriorityHelpText": "Always wait for indexers with this priority or better before returning early. 0 disables.",
   "Edit": "Edit",
   "EditAutoTag": "Edit Auto Tag",
   "EditConditionImplementation": "Edit Condition - {implementationName}",
