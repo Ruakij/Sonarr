@@ -105,7 +105,8 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
         private DownloadDecision GetDecision(ReleaseInfo release, SearchCriteriaBase criteria)
         {
-            var remoteEpisode = new RemoteEpisode { Release = release, Series = criteria.Series, Episodes = criteria.Episodes.ToList() };
+            var episodes = release.Guid == "multi" ? _episodes.ToList() : criteria.Episodes.ToList();
+            var remoteEpisode = new RemoteEpisode { Release = release, Series = criteria.Series, Episodes = episodes };
 
             if (_blocklistedGuids.Contains(release.Guid))
             {
@@ -169,6 +170,17 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             VerifyGrabbed("guid1");
             VerifyGrabbed("guid2");
+            VerifySearchCount(1);
+        }
+
+        [Test]
+        public void should_grab_multi_episode_release_once_when_falling_back_to_indexers()
+        {
+            _releases = new List<ReleaseInfo> { new ReleaseInfo { IndexerId = 1, Guid = "multi", Title = "Series.S01E01E02.Multi", DownloadProtocol = DownloadProtocol.Usenet } };
+
+            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1, 2 }) { FallbackToIndexers = true });
+
+            VerifyGrabbed("multi");
             VerifySearchCount(1);
         }
 
