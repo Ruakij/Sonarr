@@ -53,6 +53,9 @@ namespace NzbDrone.Core.IndexerSearch
         // Searching the remaining indexers of an interactive search queries only these, all at once
         private readonly AsyncLocal<HashSet<int>> _onlyIndexerIds = new AsyncLocal<HashSet<int>>();
 
+        // Collects the queries of a search instead of sending them to the indexers
+        private readonly AsyncLocal<List<SearchCriteriaBase>> _plannedQueries = new AsyncLocal<List<SearchCriteriaBase>>();
+
         // Search Concurrency is one limit per search command: every indexer query of the command takes a slot of the same semaphore.
         // Only the indexer query holds a slot, the searches around it never wait on one, so nested searches cannot deadlock
         internal static readonly AsyncLocal<SemaphoreSlim> SearchSlots = new AsyncLocal<SemaphoreSlim>();
@@ -94,9 +97,11 @@ namespace NzbDrone.Core.IndexerSearch
             var key = EpisodeCacheKey(episode.Id);
             var episodes = new List<Episode> { episode };
 
-            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), episode.SeriesId, episodes, false, userInvokedSearch, interactiveSearch) : null;
+            Func<Task<List<DownloadDecision>>> search = () => SearchEpisode(episode, userInvokedSearch, interactiveSearch);
 
-            return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchEpisode(episode, userInvokedSearch, interactiveSearch))).Decisions;
+            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), episode.SeriesId, episodes, false, userInvokedSearch, interactiveSearch, search) : null;
+
+            return cached?.Decisions ?? (await SearchAndCache(key, episodes, search)).Decisions;
         }
 
         public async Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true)
@@ -105,9 +110,11 @@ namespace NzbDrone.Core.IndexerSearch
 
             var key = SeasonCacheKey(seriesId, seasonNumber);
 
-            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch) : null;
+            Func<Task<List<DownloadDecision>>> search = () => SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch);
 
-            return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch))).Decisions;
+            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch, search) : null;
+
+            return cached?.Decisions ?? (await SearchAndCache(key, episodes, search)).Decisions;
         }
 
         public async Task<CachedSearchResult> InteractiveEpisodeSearch(int episodeId, bool refresh, bool searchRemaining)
@@ -172,7 +179,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             var cachedEntry = refresh ? null : FindCachedEntry(key);
-            var cached = FindCachedSearch(cachedEntry, seriesId, episodes, false, true, true);
+            var cached = FindCachedSearch(cachedEntry, seriesId, episodes, false, true, true, search);
 
             if (cached != null)
             {
@@ -252,7 +259,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var episode = _episodeService.GetEpisode(episodeId);
 
-            return FindCachedSearch(entry, episode.SeriesId, new List<Episode> { episode }, false, interactiveSearch, interactiveSearch);
+            return FindCachedSearch(entry, episode.SeriesId, new List<Episode> { episode }, false, interactiveSearch, interactiveSearch, () => SearchEpisode(episode, interactiveSearch, interactiveSearch));
         }
 
         public CachedSearchResult CachedSeasonSearch(int seriesId, int seasonNumber, bool interactiveSearch)
@@ -264,7 +271,9 @@ namespace NzbDrone.Core.IndexerSearch
                 return null;
             }
 
-            return FindCachedSearch(entry, seriesId, _episodeService.GetEpisodesBySeason(seriesId, seasonNumber), !interactiveSearch, interactiveSearch, interactiveSearch);
+            var episodes = _episodeService.GetEpisodesBySeason(seriesId, seasonNumber);
+
+            return FindCachedSearch(entry, seriesId, episodes, !interactiveSearch, interactiveSearch, interactiveSearch, () => SearchSeason(seriesId, seasonNumber, episodes, !interactiveSearch, interactiveSearch, interactiveSearch));
         }
 
         private static string EpisodeCacheKey(int episodeId) => $"episode:{episodeId}";
@@ -276,10 +285,18 @@ namespace NzbDrone.Core.IndexerSearch
             return _configService.SearchResultCacheLifetime > 0 ? _searchResultCache.Find(key) : null;
         }
 
-        private CachedSearchResult FindCachedSearch(CachedSearch entry, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
+        // search is the search that runs without a cached result, an interactive search is only served when the entry holds all of its queries
+        private CachedSearchResult FindCachedSearch(CachedSearch entry, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, Func<Task<List<DownloadDecision>>> search)
         {
             if (entry == null || !entry.HasAnswers || !episodes.All(e => entry.EpisodeIds.Contains(e.Id)))
             {
+                return null;
+            }
+
+            // An automatic search may have skipped queries, like the episode queries of an anime season with a good enough pack or those of unmonitored episodes
+            if (interactiveSearch && !PlanQueries(search).All(q => entry.Searches.Any(s => CachedSearch.SameCriteria(s.Criteria, q))))
+            {
+                _logger.Debug("Cached search results are missing queries of an interactive search, searching indexers");
                 return null;
             }
 
@@ -359,6 +376,25 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             return true;
+        }
+
+        // Dispatch completes at once while planning, so the search finishes without waiting
+        private List<SearchCriteriaBase> PlanQueries(Func<Task<List<DownloadDecision>>> search)
+        {
+            var queries = new List<SearchCriteriaBase>();
+
+            _plannedQueries.Value = queries;
+
+            try
+            {
+                search().GetAwaiter().GetResult();
+            }
+            finally
+            {
+                _plannedQueries.Value = null;
+            }
+
+            return queries;
         }
 
         // With previous the search only adds to the results of an earlier search, which keeps its search time
@@ -872,6 +908,18 @@ namespace NzbDrone.Core.IndexerSearch
 
         private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
         {
+            var plannedQueries = _plannedQueries.Value;
+
+            if (plannedQueries != null)
+            {
+                lock (plannedQueries)
+                {
+                    plannedQueries.Add(criteriaBase);
+                }
+
+                return new List<DownloadDecision>();
+            }
+
             var indexers = GetIndexers(criteriaBase);
             var onlyIndexerIds = _onlyIndexerIds.Value;
 
@@ -1181,11 +1229,13 @@ namespace NzbDrone.Core.IndexerSearch
                 return merged;
             }
 
-            private static bool SameCriteria(SearchCriteriaBase a, SearchCriteriaBase b)
+            // The episode titles of a special search are not part of its name, an automatic search leaves out those of unmonitored episodes
+            internal static bool SameCriteria(SearchCriteriaBase a, SearchCriteriaBase b)
             {
                 return a.GetType() == b.GetType() &&
                        a.ToString() == b.ToString() &&
-                       a.Episodes.Select(e => e.Id).OrderBy(id => id).SequenceEqual(b.Episodes.Select(e => e.Id).OrderBy(id => id));
+                       a.Episodes.Select(e => e.Id).OrderBy(id => id).SequenceEqual(b.Episodes.Select(e => e.Id).OrderBy(id => id)) &&
+                       (a is not SpecialEpisodeSearchCriteria special || special.EpisodeQueryTitles.SequenceEqual(((SpecialEpisodeSearchCriteria)b).EpisodeQueryTitles));
             }
         }
 
