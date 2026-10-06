@@ -2,7 +2,6 @@
 // Please do not change this file!
 interface CssExports {
   'arrow': string;
-  'arrowDisabled': string;
   'body': string;
   'bottom': string;
   'default': string;

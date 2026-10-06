@@ -150,75 +150,71 @@ function Tooltip(props: TooltipProps) {
         )}
       </Reference>
 
-      <Portal>
-        <Popper
-          // @ts-expect-error - PopperJS types are not in sync with our position types.
-          placement={position}
-          // Disable events to improve performance when many tooltips
-          // are shown (Quality Definitions for example).
-          eventsEnabled={false}
-          modifiers={{
-            computeMaxHeight: {
-              order: 851,
-              enabled: true,
-              fn: computeMaxSize,
-            },
-            preventOverflow: {
-              // Fixes positioning for tooltips in the queue
-              // and likely others.
-              escapeWithReference: false,
-            },
-            flip: {
-              enabled: canFlip,
-            },
-          }}
-        >
-          {({ ref, style, placement, arrowProps, scheduleUpdate }) => {
-            updater.current = scheduleUpdate;
+      {isOpen ? (
+        <Portal>
+          <Popper
+            // @ts-expect-error - PopperJS types are not in sync with our position types.
+            placement={position}
+            // Disable events to improve performance when many tooltips
+            // are shown (Quality Definitions for example).
+            eventsEnabled={false}
+            modifiers={{
+              computeMaxHeight: {
+                order: 851,
+                enabled: true,
+                fn: computeMaxSize,
+              },
+              preventOverflow: {
+                // Fixes positioning for tooltips in the queue
+                // and likely others.
+                escapeWithReference: false,
+              },
+              flip: {
+                enabled: canFlip,
+              },
+            }}
+          >
+            {({ ref, style, placement, arrowProps, scheduleUpdate }) => {
+              updater.current = scheduleUpdate;
 
-            const popperPlacement = placement
-              ? placement.split('-')[0]
-              : position;
-            const vertical =
-              popperPlacement === 'top' || popperPlacement === 'bottom';
+              const popperPlacement = placement
+                ? placement.split('-')[0]
+                : position;
+              const vertical =
+                popperPlacement === 'top' || popperPlacement === 'bottom';
 
-            return (
-              <div
-                ref={ref}
-                className={classNames(
-                  styles.tooltipContainer,
-                  vertical
-                    ? styles.verticalContainer
-                    : styles.horizontalContainer
-                )}
-                style={style}
-                onMouseEnter={handleMouseEnterTooltip}
-                onMouseLeave={handleMouseLeave}
-              >
+              return (
                 <div
-                  ref={arrowProps.ref}
-                  className={
-                    isOpen
-                      ? classNames(
-                          styles.arrow,
-                          styles[kind],
-                          // @ts-expect-error - is a string that may not exist in styles
-                          styles[popperPlacement]
-                        )
-                      : styles.arrowDisabled
-                  }
-                  style={arrowProps.style}
-                />
-                {isOpen ? (
+                  ref={ref}
+                  className={classNames(
+                    styles.tooltipContainer,
+                    vertical
+                      ? styles.verticalContainer
+                      : styles.horizontalContainer
+                  )}
+                  style={style}
+                  onMouseEnter={handleMouseEnterTooltip}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <div
+                    ref={arrowProps.ref}
+                    className={classNames(
+                      styles.arrow,
+                      styles[kind],
+                      // @ts-expect-error - is a string that may not exist in styles
+                      styles[popperPlacement]
+                    )}
+                    style={arrowProps.style}
+                  />
                   <div className={classNames(styles.tooltip, styles[kind])}>
                     <div className={bodyClassName}>{tooltip}</div>
                   </div>
-                ) : null}
-              </div>
-            );
-          }}
-        </Popper>
-      </Portal>
+                </div>
+              );
+            }}
+          </Popper>
+        </Portal>
+      ) : null}
     </Manager>
   );
 }
