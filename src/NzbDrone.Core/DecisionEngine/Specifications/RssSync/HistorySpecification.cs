@@ -49,7 +49,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             foreach (var episode in subject.Episodes)
             {
                 _logger.Debug("Checking current status of episode [{0}] in history", episode.Id);
-                var mostRecent = DecisionRunCache.GetOrAdd("MostRecentHistoryForEpisode", episode.Id, () => _historyService.MostRecentForEpisode(episode.Id));
+                var mostRecent = DecisionRunCache.Get($"history:mostRecent:{episode.Id}", () => _historyService.MostRecentForEpisode(episode.Id));
 
                 if (mostRecent != null && mostRecent.EventType == EpisodeHistoryEventType.Grabbed)
                 {
@@ -60,7 +60,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                         continue;
                     }
 
-                    var customFormats = DecisionRunCache.GetOrAdd("HistoryCustomFormats", mostRecent.Id, () => _formatService.ParseCustomFormat(mostRecent, subject.Series));
+                    var customFormats = DecisionRunCache.Get($"customFormats:history:{mostRecent.Id}", () => _formatService.ParseCustomFormat(mostRecent, subject.Series));
 
                     // The series will be the same as the one in history since it's the same episode.
                     // Instead of fetching the series from the DB reuse the known series.
