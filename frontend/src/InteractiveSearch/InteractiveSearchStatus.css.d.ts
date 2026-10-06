@@ -2,7 +2,13 @@
 // Please do not change this file!
 interface CssExports {
   'body': string;
+  'groupStart': string;
   'message': string;
+  'numericCell': string;
+  'numericHeader': string;
+  'requiredLabel': string;
+  'row': string;
+  'statusIcon': string;
   'summary': string;
 }
 export const cssExports: CssExports;

@@ -19,6 +19,13 @@ namespace Sonarr.Api.V3.Indexers
         public IndexerSearchStatusType Status { get; set; }
         public int ReleaseCount { get; set; }
         public string Message { get; set; }
+        public DateTime? CachedAt { get; set; }
+        public int? QueryCount { get; set; }
+        public int? MedianResponseMs { get; set; }
+        public int? HistoryCount { get; set; }
+        public int? HistoryMedianMs { get; set; }
+        public int? HistoryLowMs { get; set; }
+        public int? HistoryHighMs { get; set; }
     }
 
     public static class ReleaseSearchStatusResourceMapper
@@ -35,7 +42,14 @@ namespace Sonarr.Api.V3.Indexers
                     Priority = i.Priority,
                     Status = i.Status,
                     ReleaseCount = i.ReleaseCount,
-                    Message = i.Message
+                    Message = i.Message,
+                    CachedAt = i.CachedAt,
+                    QueryCount = i.QueryCount,
+                    MedianResponseMs = i.MedianResponseMs,
+                    HistoryCount = i.HistoryCount,
+                    HistoryMedianMs = i.HistoryMedianMs,
+                    HistoryLowMs = i.HistoryLowMs,
+                    HistoryHighMs = i.HistoryHighMs
                 }).ToList()
             };
         }

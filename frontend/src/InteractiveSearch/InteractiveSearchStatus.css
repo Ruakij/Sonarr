@@ -11,3 +11,35 @@
   color: var(--helpTextColor);
   font-size: 12px;
 }
+
+.statusIcon {
+  margin-right: 5px;
+}
+
+.row {
+  composes: row from '~Components/Table/TableRow.css';
+}
+
+.groupStart {
+  td {
+    border-top: 2px solid var(--darkGray);
+  }
+}
+
+.numericHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: right;
+}
+
+.numericCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: right;
+}
+
+.requiredLabel {
+  composes: label from '~Components/Label.css';
+
+  margin-right: 5px;
+}
