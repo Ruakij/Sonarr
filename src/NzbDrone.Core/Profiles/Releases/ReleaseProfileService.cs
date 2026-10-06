@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
-using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Profiles.Releases
@@ -21,34 +20,36 @@ namespace NzbDrone.Core.Profiles.Releases
     public class ReleaseProfileService : IReleaseProfileService
     {
         private readonly IRestrictionRepository _repo;
-        private readonly ICached<List<ReleaseProfile>> _cache;
         private readonly Logger _logger;
 
-        public ReleaseProfileService(IRestrictionRepository repo, ICacheManager cacheManager, Logger logger)
+        // The decision engine reads the profiles for every release; they change only through this service.
+        private readonly object _profilesLock = new ();
+        private List<ReleaseProfile> _profiles;
+
+        public ReleaseProfileService(IRestrictionRepository repo, Logger logger)
         {
             _repo = repo;
-            _cache = cacheManager.GetCache<List<ReleaseProfile>>(typeof(ReleaseProfile), "profiles");
             _logger = logger;
-        }
-
-        private List<ReleaseProfile> Cached()
-        {
-            return _cache.Get("all", () => _repo.All().ToList());
         }
 
         public List<ReleaseProfile> All()
         {
-            return Cached().ToList();
+            lock (_profilesLock)
+            {
+                _profiles ??= _repo.All().ToList();
+
+                return _profiles.ToList();
+            }
         }
 
         public List<ReleaseProfile> AllForTag(int tagId)
         {
-            return Cached().Where(r => r.Tags.Contains(tagId)).ToList();
+            return All().Where(r => r.Tags.Contains(tagId)).ToList();
         }
 
         public List<ReleaseProfile> AllForTags(HashSet<int> tagIds)
         {
-            return Cached().Where(r => r.Tags.Intersect(tagIds).Any() || r.Tags.Empty()).ToList();
+            return All().Where(r => r.Tags.Intersect(tagIds).Any() || r.Tags.Empty()).ToList();
         }
 
         public List<ReleaseProfile> EnabledForTags(HashSet<int> tagIds, int indexerId)
@@ -66,13 +67,13 @@ namespace NzbDrone.Core.Profiles.Releases
         public void Delete(int id)
         {
             _repo.Delete(id);
-            _cache.Clear();
+            ClearProfiles();
         }
 
         public ReleaseProfile Add(ReleaseProfile restriction)
         {
             var result = _repo.Insert(restriction);
-            _cache.Clear();
+            ClearProfiles();
 
             return result;
         }
@@ -80,9 +81,17 @@ namespace NzbDrone.Core.Profiles.Releases
         public ReleaseProfile Update(ReleaseProfile restriction)
         {
             var result = _repo.Update(restriction);
-            _cache.Clear();
+            ClearProfiles();
 
             return result;
+        }
+
+        private void ClearProfiles()
+        {
+            lock (_profilesLock)
+            {
+                _profiles = null;
+            }
         }
     }
 }

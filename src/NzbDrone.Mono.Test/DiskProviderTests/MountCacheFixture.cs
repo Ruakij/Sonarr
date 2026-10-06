@@ -53,17 +53,27 @@ namespace NzbDrone.Mono.Test.DiskProviderTests
         [Test]
         public void should_reread_mounts_after_the_cache_expired()
         {
-            Subject.MountCacheDuration = TimeSpan.Zero;
+            var subject = Mocker.Resolve<ExpiringMountsDiskProvider>();
 
-            Subject.GetMount("/mnt/media/tv").RootDirectory.Should().Be("/mnt/media");
+            subject.GetMount("/mnt/media/tv").RootDirectory.Should().Be("/mnt/media");
 
             Mocker.GetMock<IProcMountProvider>()
                   .Setup(v => v.GetMounts())
                   .Returns(() => new List<IMount> { GivenMount("/") });
 
-            Subject.GetMount("/mnt/media/tv").RootDirectory.Should().Be("/");
+            subject.GetMount("/mnt/media/tv").RootDirectory.Should().Be("/");
 
             Mocker.GetMock<IProcMountProvider>().Verify(v => v.GetMounts(), Times.Exactly(2));
+        }
+
+        public class ExpiringMountsDiskProvider : DiskProvider
+        {
+            public ExpiringMountsDiskProvider(IProcMountProvider procMountProvider, ISymbolicLinkResolver symLinkResolver, ICreateRefLink createRefLink, NLog.Logger logger)
+                : base(procMountProvider, symLinkResolver, createRefLink, logger)
+            {
+            }
+
+            protected override TimeSpan MountCacheLifetime => TimeSpan.Zero;
         }
     }
 }

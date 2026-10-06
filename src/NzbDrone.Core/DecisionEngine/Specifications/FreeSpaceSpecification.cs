@@ -34,7 +34,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             var size = subject.Release.Size;
             var path = subject.Series.Path;
-            var freeSpace = DecisionRunCache.GetOrAdd<long?>("FreeSpace", path, () =>
+            var freeSpace = DecisionRunCache.Get<long?>($"freeSpace:{path}", () =>
             {
                 try
                 {

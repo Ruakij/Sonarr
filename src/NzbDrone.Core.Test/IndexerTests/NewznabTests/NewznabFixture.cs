@@ -91,6 +91,9 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
 
             releases.Should().BeEmpty();
             criteria.IndexerFailures[5].Should().BeOfType<WebException>();
+
+            // A timed out request logs the indexer as unavailable
+            ExceptionVerification.IgnoreWarns();
         }
 
         private SingleEpisodeSearchCriteria GetEpisodeCriteria(int episodeNumber)
@@ -128,7 +131,7 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
             var requestCount = Mocker.GetMock<IHttpClient>().Invocations.Count(i => i.Method.Name == nameof(IHttpClient.ExecuteAsync));
 
             requestCount.Should().BeGreaterThan(1);
-            criteria.IndexerRequestCounts[5].Should().Be(requestCount);
+            criteria.IndexerRequestDurations[5].Should().HaveCount(requestCount);
         }
 
         [Test]
@@ -136,7 +139,7 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
         {
             var key = GetSearchQueryKey("secretkey");
 
-            key.Should().StartWith("GET http://indexer.local/api?");
+            key.Should().StartWith("GET http://indexer.local:/api?");
             key.Should().NotContain("secretkey").And.NotContain("apikey");
             key.Should().Be(GetSearchQueryKey("otherkey"));
             key.Should().NotBe(GetSearchQueryKey("secretkey", 2));
