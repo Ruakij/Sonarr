@@ -223,7 +223,7 @@ namespace NzbDrone.Core.DecisionEngine
             if (series.QualityProfile is { IsLoaded: false })
             {
                 var lazyProfile = series.QualityProfile;
-                series.QualityProfile = new LazyLoaded<QualityProfile>(DecisionRunCache.GetOrAdd("QualityProfile", series.QualityProfileId, () => lazyProfile.Value));
+                series.QualityProfile = new LazyLoaded<QualityProfile>(DecisionRunCache.Get($"qualityProfile:{series.QualityProfileId}", () => lazyProfile.Value));
             }
 
             foreach (var episode in remoteEpisode.Episodes)
@@ -231,7 +231,7 @@ namespace NzbDrone.Core.DecisionEngine
                 if (episode.EpisodeFileId != 0 && episode.EpisodeFile is { IsLoaded: false })
                 {
                     var lazyFile = episode.EpisodeFile;
-                    episode.EpisodeFile = new LazyLoaded<EpisodeFile>(DecisionRunCache.GetOrAdd("EpisodeFile", episode.EpisodeFileId, () => lazyFile.Value));
+                    episode.EpisodeFile = new LazyLoaded<EpisodeFile>(DecisionRunCache.Get($"episodeFile:{episode.EpisodeFileId}", () => lazyFile.Value));
                 }
             }
         }

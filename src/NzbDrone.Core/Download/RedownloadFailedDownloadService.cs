@@ -53,7 +53,7 @@ namespace NzbDrone.Core.Download
             {
                 _logger.Debug("Failed download only contains one episode, searching again");
 
-                _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds) { FallbackToIndexers = true });
+                _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds));
 
                 return;
             }
@@ -68,8 +68,7 @@ namespace NzbDrone.Core.Download
                 _commandQueueManager.Push(new SeasonSearchCommand
                 {
                     SeriesId = message.SeriesId,
-                    SeasonNumber = seasonNumber,
-                    FallbackToIndexers = true
+                    SeasonNumber = seasonNumber
                 });
 
                 return;
@@ -77,7 +76,7 @@ namespace NzbDrone.Core.Download
 
             _logger.Debug("Failed download contains multiple episodes, probably a double episode, searching again");
 
-            _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds) { FallbackToIndexers = true });
+            _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds));
         }
     }
 }

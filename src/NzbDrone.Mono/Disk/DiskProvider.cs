@@ -23,12 +23,6 @@ namespace NzbDrone.Mono.Disk
         private readonly ISymbolicLinkResolver _symLinkResolver;
         private readonly ICreateRefLink _createRefLink;
 
-        // Reading the mounts parses /proc/mounts and statfs's every drive, which is slow with many (FUSE) mounts
-        // and runs for every free space check. Free space is still read live from the mount.
-        private MountSnapshot _mounts;
-
-        public TimeSpan MountCacheDuration { get; set; } = TimeSpan.FromSeconds(30);
-
         public DiskProvider(IProcMountProvider procMountProvider, ISymbolicLinkResolver symLinkResolver, ICreateRefLink createRefLink, Logger logger)
         {
             _procMountProvider = procMountProvider;
@@ -173,21 +167,6 @@ namespace NzbDrone.Mono.Disk
         }
 
         protected override List<IMount> GetAllMounts()
-        {
-            var cached = _mounts;
-
-            if (cached != null && DateTime.UtcNow < cached.Expires)
-            {
-                return cached.Mounts;
-            }
-
-            var mounts = ReadAllMounts();
-            _mounts = new MountSnapshot(mounts, DateTime.UtcNow + MountCacheDuration);
-
-            return mounts;
-        }
-
-        private List<IMount> ReadAllMounts()
         {
             var mounts = new List<IMount>();
 
@@ -532,18 +511,6 @@ namespace NzbDrone.Mono.Disk
             }
 
             return g.gr_gid;
-        }
-
-        private sealed class MountSnapshot
-        {
-            public MountSnapshot(List<IMount> mounts, DateTime expires)
-            {
-                Mounts = mounts;
-                Expires = expires;
-            }
-
-            public List<IMount> Mounts { get; }
-            public DateTime Expires { get; }
         }
     }
 }

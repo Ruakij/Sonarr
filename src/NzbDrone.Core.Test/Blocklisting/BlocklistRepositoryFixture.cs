@@ -5,6 +5,7 @@ using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
 using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
@@ -103,10 +104,10 @@ namespace NzbDrone.Core.Test.Blocklisting
 
             var all = Subject.BlocklistedBySeries(_series1.Id);
 
-            all.Where(b => BlocklistService.SqliteLikeContains(b.SourceTitle, search)).Select(b => b.Id)
+            all.Where(b => SqliteLike.Contains(b.SourceTitle, search)).Select(b => b.Id)
                 .Should().BeEquivalentTo(Subject.BlocklistedByTitle(_series1.Id, search).Select(b => b.Id));
 
-            all.Where(b => BlocklistService.SqliteLikeContains(b.TorrentInfoHash, search)).Select(b => b.Id)
+            all.Where(b => SqliteLike.Contains(b.TorrentInfoHash, search)).Select(b => b.Id)
                 .Should().BeEquivalentTo(Subject.BlocklistedByTorrentInfoHash(_series1.Id, search).Select(b => b.Id));
         }
 

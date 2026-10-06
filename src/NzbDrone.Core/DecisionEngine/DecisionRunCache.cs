@@ -1,63 +1,45 @@
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Threading;
 
 namespace NzbDrone.Core.DecisionEngine
 {
-    // Shares data the specifications load per release across all releases of one decision run, so it is
-    // loaded once per run. Nothing a decision depends on is written during a run, so the values cannot go
-    // stale. It is ambient per thread because the specifications only receive the release; outside a run
-    // every lookup loads directly.
-    public sealed class DecisionRunCache : IDisposable
+    // Specifications and lookups evaluate every release of a decision run against the same movie data,
+    // which does not change while the run lasts, so they share one load per run instead of one per release.
+    // Outside a run every lookup goes to its source.
+    public static class DecisionRunCache
     {
-        [ThreadStatic]
-        private static DecisionRunCache _current;
+        private static readonly AsyncLocal<ConcurrentDictionary<string, object>> Current = new ();
 
-        private readonly Dictionary<(string Kind, object Key), object> _values = new ();
-
-        private DecisionRunCache()
-        {
-        }
-
-        public static bool Active => _current != null;
-
-        // Returns null for a nested run, which keeps sharing the outer run.
         public static IDisposable Begin()
         {
-            if (_current != null)
+            if (Current.Value != null)
             {
                 return null;
             }
 
-            _current = new DecisionRunCache();
+            Current.Value = new ConcurrentDictionary<string, object>();
 
-            return _current;
+            return new Scope();
         }
 
-        public static T GetOrAdd<T>(string kind, object key, Func<T> load)
+        public static T Get<T>(string key, Func<T> fetch)
         {
-            var run = _current;
+            var values = Current.Value;
 
-            if (run == null)
+            if (values == null)
             {
-                return load();
+                return fetch();
             }
 
-            if (run._values.TryGetValue((kind, key), out var value))
-            {
-                return (T)value;
-            }
-
-            var loaded = load();
-            run._values[(kind, key)] = loaded;
-
-            return loaded;
+            return (T)values.GetOrAdd(key, _ => fetch());
         }
 
-        public void Dispose()
+        private sealed class Scope : IDisposable
         {
-            if (_current == this)
+            public void Dispose()
             {
-                _current = null;
+                Current.Value = null;
             }
         }
     }
