@@ -62,6 +62,77 @@ namespace NzbDrone.Core.Test.MediaCoverTests
             covers.Single().Url.Should().Be("/MediaCover/12/banner.jpg");
         }
 
+        private string ConvertPoster()
+        {
+            var covers = new List<MediaCover.MediaCover> { new MediaCover.MediaCover { CoverType = MediaCoverTypes.Poster } };
+
+            Subject.ConvertToLocalUrls(_series.Id, covers);
+
+            return covers.Single().Url;
+        }
+
+        private void GivenPosterWritten(long? ticks)
+        {
+            Mocker.GetMock<IDiskProvider>().Setup(c => c.FileExists(It.IsAny<string>())).Returns(ticks.HasValue);
+            Mocker.GetMock<IDiskProvider>().Setup(c => c.FileGetLastWrite(It.IsAny<string>())).Returns(new DateTime(ticks ?? 0));
+        }
+
+        private void GivenPosterExists(bool exists)
+        {
+            Mocker.GetMock<ICoverExistsSpecification>()
+                  .Setup(v => v.AlreadyExists(It.IsAny<string>(), It.IsAny<string>()))
+                  .Returns(exists);
+        }
+
+        [Test]
+        public void should_check_the_cover_file_once()
+        {
+            GivenPosterWritten(1234);
+
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=1234");
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=1234");
+
+            Mocker.GetMock<IDiskProvider>().Verify(c => c.FileExists(It.IsAny<string>()), Times.Once());
+        }
+
+        [Test]
+        public void should_return_the_last_write_of_a_downloaded_cover()
+        {
+            GivenPosterWritten(null);
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg");
+
+            GivenPosterExists(false);
+            GivenPosterWritten(1234);
+            Subject.HandleAsync(new SeriesUpdatedEvent(_series));
+
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=1234");
+        }
+
+        [Test]
+        public void should_refresh_the_last_write_when_the_series_is_updated()
+        {
+            GivenPosterWritten(1234);
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=1234");
+
+            GivenPosterExists(true);
+            GivenPosterWritten(5678);
+            Subject.HandleAsync(new SeriesUpdatedEvent(_series));
+
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=5678");
+        }
+
+        [Test]
+        public void should_forget_the_last_write_when_the_series_is_deleted()
+        {
+            GivenPosterWritten(1234);
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg?lastWrite=1234");
+
+            Subject.HandleAsync(new SeriesDeletedEvent(new List<Series> { _series }, false, false));
+            GivenPosterWritten(null);
+
+            ConvertPoster().Should().Be("/MediaCover/2/poster.jpg");
+        }
+
         [Test]
         public void should_resize_covers_if_main_downloaded()
         {

@@ -21,7 +21,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             foreach (var episodeFileId in episodeFileIds)
             {
-                var episodesInFile = _episodeService.GetEpisodesByFileId(episodeFileId);
+                var episodesInFile = DecisionRunCache.GetOrAdd("EpisodesByFile", episodeFileId, () => _episodeService.GetEpisodesByFileId(episodeFileId));
 
                 if (episodesInFile.Select(e => e.Id).Except(episodeIds).Any())
                 {

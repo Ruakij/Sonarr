@@ -74,7 +74,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             };
 
             Mocker.GetMock<ICustomFormatCalculationService>()
-                  .Setup(x => x.ParseCustomFormat(It.IsAny<EpisodeFile>()))
+                  .Setup(x => x.ParseCustomFormat(It.IsAny<EpisodeFile>(), It.IsAny<Series>()))
                   .Returns(new List<CustomFormat>());
         }
 
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         private void GivenOldCustomFormats(List<CustomFormat> formats)
         {
             Mocker.GetMock<ICustomFormatCalculationService>()
-                .Setup(x => x.ParseCustomFormat(It.IsAny<EpisodeFile>()))
+                .Setup(x => x.ParseCustomFormat(It.IsAny<EpisodeFile>(), It.IsAny<Series>()))
                 .Returns(formats);
         }
 
@@ -186,7 +186,7 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         public void should_not_be_upgradable_if_revision_downgrade_and_preferred_word_upgrade_if_propers_are_preferred()
         {
             Mocker.GetMock<ICustomFormatCalculationService>()
-                  .Setup(s => s.ParseCustomFormat(It.IsAny<EpisodeFile>()))
+                  .Setup(s => s.ParseCustomFormat(It.IsAny<EpisodeFile>(), It.IsAny<Series>()))
                   .Returns(new List<CustomFormat>());
 
             _parseResultSingle.CustomFormatScore = 10;
