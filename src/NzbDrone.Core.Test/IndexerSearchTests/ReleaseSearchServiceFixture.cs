@@ -1189,7 +1189,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.ProcessDecisions(It.IsAny<List<DownloadDecision>>()))
                   .Returns(Task.FromResult(new ProcessedDecisions(new List<DownloadDecision>(), new List<DownloadDecision>(), new List<DownloadDecision>())));
 
-            await EpisodeSearchService.SearchAndProcess(new[] { 1, 2, 3 }, 3, Mocker.GetMock<IProcessDownloadDecisions>().Object, _ => Subject.SeasonSearch(_xemSeries.Id, 1, false, true, true, false, false));
+            await EpisodeSearchService.SearchAndProcess(new[] { 1, 2, 3 }, 3, Mocker.GetMock<IProcessDownloadDecisions>().Object, _ => Subject.SeasonSearch(_xemSeries.Id, 1, false, true, true, false));
 
             maxRunning.Should().Be(3);
             episodeSearches.Should().HaveCount(12);

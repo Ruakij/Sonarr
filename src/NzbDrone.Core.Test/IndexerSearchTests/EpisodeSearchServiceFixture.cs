@@ -345,11 +345,11 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public void should_search_again_when_cache_is_bypassed()
+        public void should_search_again_when_interactive_search_is_searched_again()
         {
             SearchAndFail("guid1");
 
-            Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, false, false).GetAwaiter().GetResult();
+            Mocker.Resolve<ISearchForReleases>().InteractiveEpisodeSearch(1, true, false).GetAwaiter().GetResult();
 
             VerifySearchCount(2);
         }
@@ -372,15 +372,15 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public void should_search_indexers_and_refresh_cache_for_manual_search()
+        public void should_use_cached_results_for_manual_search()
         {
             SearchAndFail("guid1");
             _releases.Add(new ReleaseInfo { IndexerId = 1, Guid = "guid4", Title = "Series.S01E01.Release4", DownloadProtocol = DownloadProtocol.Usenet });
 
             Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }) { Trigger = CommandTrigger.Manual });
 
-            VerifySearchCount(2);
-            GetCache().Values.Single().Releases.Select(r => r.Guid).Should().Contain("guid4");
+            VerifyGrabbed("guid2");
+            VerifySearchCount(1);
         }
 
         [Test]
@@ -437,7 +437,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         {
             GivenInteractiveOnlyIndexer();
 
-            Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, true, false).GetAwaiter().GetResult();
+            Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, true).GetAwaiter().GetResult();
 
             Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, false, false).GetAwaiter().GetResult().Select(d => d.RemoteEpisode.Release.Guid).Should().BeEquivalentTo("guid1", "guid2", "guid3");
             VerifySearchCount(1);
