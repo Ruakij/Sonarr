@@ -91,6 +91,9 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
 
             releases.Should().BeEmpty();
             criteria.IndexerFailures[5].Should().BeOfType<WebException>();
+
+            // A timed out request logs the indexer as unavailable
+            ExceptionVerification.IgnoreWarns();
         }
 
         private SingleEpisodeSearchCriteria GetEpisodeCriteria(int episodeNumber)
