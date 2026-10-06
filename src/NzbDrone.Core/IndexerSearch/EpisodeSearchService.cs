@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
@@ -23,6 +24,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IEpisodeService _episodeService;
         private readonly IEpisodeCutoffService _episodeCutoffService;
         private readonly IQueueService _queueService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public EpisodeSearchService(ISearchForReleases releaseSearchService,
@@ -30,6 +32,7 @@ namespace NzbDrone.Core.IndexerSearch
                                     IEpisodeService episodeService,
                                     IEpisodeCutoffService episodeCutoffService,
                                     IQueueService queueService,
+                                    IConfigService configService,
                                     Logger logger)
         {
             _releaseSearchService = releaseSearchService;
@@ -37,6 +40,7 @@ namespace NzbDrone.Core.IndexerSearch
             _episodeService = episodeService;
             _episodeCutoffService = episodeCutoffService;
             _queueService = queueService;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -59,10 +63,10 @@ namespace NzbDrone.Core.IndexerSearch
                 }
             }
 
-            foreach (var group in groups.OrderBy(g => g.Episodes.Min(e => e.LastSearchTime ?? DateTime.MinValue)))
-            {
-                List<DownloadDecision> decisions;
+            var orderedGroups = groups.OrderBy(g => g.Episodes.Min(e => e.LastSearchTime ?? DateTime.MinValue));
 
+            downloadedCount = await SearchAndProcess(orderedGroups, _configService.EpisodeSearchConcurrency, _processDownloadDecisions, async group =>
+            {
                 var seriesId = group.SeriesId;
                 var seasonNumber = group.SeasonNumber;
                 var groupEpisodes = group.Episodes;
@@ -71,35 +75,62 @@ namespace NzbDrone.Core.IndexerSearch
                 {
                     try
                     {
-                        decisions = await _releaseSearchService.SeasonSearch(seriesId, seasonNumber, groupEpisodes, monitoredOnly, userInvokedSearch, false);
+                        return await _releaseSearchService.SeasonSearch(seriesId, seasonNumber, groupEpisodes, monitoredOnly, userInvokedSearch, false);
                     }
                     catch (Exception ex)
                     {
                         _logger.Error(ex, "Unable to search for episodes in season {0} of [{1}]", seasonNumber, seriesId);
-                        continue;
+                        return null;
                     }
                 }
-                else
+
+                var episode = groupEpisodes.First();
+
+                try
                 {
-                    var episode = groupEpisodes.First();
-
-                    try
-                    {
-                        decisions = await _releaseSearchService.EpisodeSearch(episode, userInvokedSearch, false);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Unable to search for episode: [{0}]", episode);
-                        continue;
-                    }
+                    return await _releaseSearchService.EpisodeSearch(episode, userInvokedSearch, false);
                 }
-
-                var processed = await _processDownloadDecisions.ProcessDecisions(decisions);
-
-                downloadedCount += processed.Grabbed.Count;
-            }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Unable to search for episode: [{0}]", episode);
+                    return null;
+                }
+            });
 
             _logger.ProgressInfo("Completed search for {0} episodes. {1} reports downloaded.", episodes.Count, downloadedCount);
+        }
+
+        // Runs up to `concurrency` searches at once and processes their decisions one after another in the given order.
+        // Searches running ahead decide before earlier grabs reach the queue, so releases for episodes grabbed earlier are dropped,
+        // a multi-season pack found by several season searches is grabbed once. A search returning null is skipped.
+        internal static async Task<int> SearchAndProcess<T>(IEnumerable<T> items, int concurrency, IProcessDownloadDecisions processDownloadDecisions, Func<T, Task<List<DownloadDecision>>> search)
+        {
+            var pending = items.ToList();
+            var searches = new List<Task<List<DownloadDecision>>>();
+            var grabbedEpisodeIds = new HashSet<int>();
+            var grabbedCount = 0;
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                while (searches.Count < pending.Count && searches.Count < i + Math.Max(1, concurrency))
+                {
+                    searches.Add(search(pending[searches.Count]));
+                }
+
+                var decisions = await searches[i];
+
+                if (decisions == null)
+                {
+                    continue;
+                }
+
+                var processed = await processDownloadDecisions.ProcessDecisions(decisions.Where(d => d.RemoteEpisode.Episodes.None(e => grabbedEpisodeIds.Contains(e.Id))).ToList());
+
+                grabbedEpisodeIds.UnionWith(processed.Grabbed.SelectMany(d => d.RemoteEpisode.Episodes).Select(e => e.Id));
+                grabbedCount += processed.Grabbed.Count;
+            }
+
+            return grabbedCount;
         }
 
         private bool IsMonitored(bool episodeMonitored, bool seriesMonitored)

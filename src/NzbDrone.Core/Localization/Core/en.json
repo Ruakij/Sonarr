@@ -663,7 +663,7 @@
   "EpisodeProgress": "Episode Progress",
   "EpisodeRequested": "Episode Requested",
   "EpisodeSearchConcurrency": "Episode Search Concurrency",
-  "EpisodeSearchConcurrencyHelpText": "Number of episode searches an anime season search runs at the same time, per indexer rate limits still apply. 1 searches one episode after another",
+  "EpisodeSearchConcurrencyHelpText": "Number of searches run at the same time by series searches over several seasons, missing and cutoff unmet searches and the episode searches of anime season searches. Releases are still grabbed one after another in the original order, per indexer rate limits still apply. 1 searches one after another",
   "EpisodeSearchResultsLoadError": "Unable to load results for this episode search. Try again later",
   "EpisodeTitle": "Episode Title",
   "EpisodeTitleFootNote": "Optionally control truncation to a maximum number of bytes including ellipsis (`...`). Truncating from the end (e.g. `{Episode Title:30}`) or the beginning (e.g. `{Episode Title:-30}`) are both supported. Episode titles will be automatically truncated to file system limitations if necessary.",
