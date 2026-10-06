@@ -140,17 +140,27 @@ namespace NzbDrone.Core.IndexerSearch
 
         public void Execute(EpisodeSearchCommand message)
         {
+            var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
+
+            // Cached releases are grabbed while going through the episodes, so only searches without them run in parallel.
+            // Searches started by hand query the indexers, their results still refresh the cache
+            if (!message.FallbackToIndexers)
+            {
+                var grabbed = SearchAndProcess(message.EpisodeIds, _configService.SearchConcurrency, _processDownloadDecisions, episodeId => _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
+
+                _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", grabbed);
+
+                return;
+            }
+
             foreach (var episodeId in message.EpisodeIds)
             {
-                if (message.FallbackToIndexers && GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
+                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
                 {
                     continue;
                 }
 
-                var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
-
-                // Searches started by hand query the indexers, their results still refresh the cache
-                var decisions = _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, !message.FallbackToIndexers && !userInvokedSearch).GetAwaiter().GetResult();
+                var decisions = _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, false).GetAwaiter().GetResult();
                 var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
