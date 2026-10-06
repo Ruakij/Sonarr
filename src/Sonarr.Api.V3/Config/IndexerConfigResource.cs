@@ -11,6 +11,7 @@ namespace Sonarr.Api.V3.Config
         public int RssSyncInterval { get; set; }
         public bool EarlySearchReturn { get; set; }
         public int EarlySearchReturnMinimumWait { get; set; }
+        public int EarlySearchReturnRequiredPriority { get; set; }
         public int SearchConcurrency { get; set; }
         public int SearchResultCacheLifetime { get; set; }
     }
@@ -27,6 +28,7 @@ namespace Sonarr.Api.V3.Config
                 RssSyncInterval = model.RssSyncInterval,
                 EarlySearchReturn = model.EarlySearchReturn,
                 EarlySearchReturnMinimumWait = model.EarlySearchReturnMinimumWait,
+                EarlySearchReturnRequiredPriority = model.EarlySearchReturnRequiredPriority,
                 SearchConcurrency = model.SearchConcurrency,
                 SearchResultCacheLifetime = model.SearchResultCacheLifetime
             };

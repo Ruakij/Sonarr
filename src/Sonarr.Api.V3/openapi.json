@@ -9488,6 +9488,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "earlySearchReturnRequiredPriority": {
+            "type": "integer",
+            "format": "int32"
+          },
           "searchConcurrency": {
             "type": "integer",
             "format": "int32"

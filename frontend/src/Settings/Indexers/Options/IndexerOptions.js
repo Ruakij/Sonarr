@@ -126,6 +126,27 @@ function IndexerOptions(props) {
                 null
             }
 
+            {
+              settings.earlySearchReturn.value ?
+                <FormGroup
+                  advancedSettings={advancedSettings}
+                  isAdvanced={true}
+                >
+                  <FormLabel>{translate('EarlySearchReturnRequiredPriority')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.NUMBER}
+                    name="earlySearchReturnRequiredPriority"
+                    min={0}
+                    max={50}
+                    helpText={translate('EarlySearchReturnRequiredPriorityHelpText')}
+                    onChange={onInputChange}
+                    {...settings.earlySearchReturnRequiredPriority}
+                  />
+                </FormGroup> :
+                null
+            }
+
             <FormGroup
               advancedSettings={advancedSettings}
               isAdvanced={true}
