@@ -81,6 +81,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             _indexer = Mocker.GetMock<IIndexer>();
             _indexer.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 1 });
+            GivenQueryKeys(_indexer);
             _indexer.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()))
                     .Returns(() => Task.FromResult<IList<ReleaseInfo>>(_releases.ToList()));
             _indexer.Setup(s => s.Fetch(It.IsAny<SeasonSearchCriteria>()))
@@ -137,6 +138,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         {
             var interactiveOnly = new Mock<IIndexer>();
             interactiveOnly.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 2 });
+            GivenQueryKeys(interactiveOnly);
             interactiveOnly.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()))
                            .Returns(() => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo> { new ReleaseInfo { IndexerId = 2, Guid = "interactive", Title = "Series.S01E01.Interactive", DownloadProtocol = DownloadProtocol.Usenet } }));
 
@@ -156,9 +158,20 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             _indexer.Verify(v => v.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()), Times.Exactly(count));
         }
 
-        private ICached<ReleaseSearchService.CachedSearch> GetCache()
+        private static void GivenQueryKeys(Mock<IIndexer> indexer)
         {
-            return Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedSearch>(typeof(ReleaseSearchService), "searchResults");
+            indexer.Setup(s => s.GetSearchQueryKey(It.IsAny<SearchCriteriaBase>()))
+                   .Returns<SearchCriteriaBase>(c => $"{c.GetType().Name} {c}");
+        }
+
+        private ICached<ReleaseSearchService.CachedQuery> GetCache()
+        {
+            return Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedQuery>(typeof(ReleaseSearchService), "searchQueries");
+        }
+
+        private void GivenCachedQueriesFetchedAt(DateTime fetchedAt)
+        {
+            GetCache().Values.ToList().ForEach(q => q.FetchedAt = fetchedAt);
         }
 
         [Test]
@@ -215,8 +228,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         {
             SearchAndFail("guid1");
 
-            var cache = GetCache();
-            cache.Set("episode:1", cache.Find("episode:1"), TimeSpan.FromMilliseconds(-1));
+            GivenCachedQueriesFetchedAt(DateTime.UtcNow.AddMinutes(-11));
 
             RedownloadFailed();
 
@@ -283,12 +295,12 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public void should_clear_expired_cache_entries_when_caching()
         {
-            GetCache().Set("episode:99", new ReleaseSearchService.CachedSearch(), TimeSpan.FromMilliseconds(-1));
+            GetCache().Set("1:other", new ReleaseSearchService.CachedQuery(new List<ReleaseInfo>(), DateTime.UtcNow), TimeSpan.FromMilliseconds(-1));
 
             SearchAndFail("guid1");
 
             GetCache().Count.Should().Be(1);
-            GetCache().Find("episode:1").Should().NotBeNull();
+            GetCache().Find("1:other").Should().BeNull();
         }
 
         [Test]
@@ -307,15 +319,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public void should_not_serve_cached_search_no_indexer_answered()
-        {
-            GetCache().Set("episode:1", new ReleaseSearchService.CachedSearch { EpisodeIds = new HashSet<int> { 1 } });
-
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Should().BeNull();
-        }
-
-        [Test]
-        public void should_clear_cache_when_lifetime_is_zero()
+        public void should_not_use_cached_queries_when_lifetime_is_zero()
         {
             SearchAndFail("guid1");
             GetCache().Count.Should().Be(1);
@@ -324,9 +328,22 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .SetupGet(s => s.SearchResultCacheLifetime)
                   .Returns(0);
 
-            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
+            RedownloadFailed();
 
-            GetCache().Count.Should().Be(0);
+            VerifySearchCount(2);
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1).Should().BeNull();
+        }
+
+        [Test]
+        public void should_cache_empty_result()
+        {
+            _releases.Clear();
+
+            Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }));
+            Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, false).GetAwaiter().GetResult();
+
+            GetCache().Values.Single().Releases.Should().BeEmpty();
+            VerifySearchCount(1);
         }
 
         [Test]
@@ -355,12 +372,15 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         {
             SearchAndFail("guid1");
 
-            var cached = Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, true);
+            var fetchedAt = DateTime.UtcNow.AddMinutes(-5);
+            GivenCachedQueriesFetchedAt(fetchedAt);
+
+            var cached = Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1);
 
             cached.Should().NotBeNull();
             cached.Decisions.Should().HaveCount(3);
             cached.Decisions.Single(d => d.RemoteEpisode.Release.Guid == "guid1").Approved.Should().BeFalse();
-            cached.SearchedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+            cached.SearchedAt.Should().Be(fetchedAt);
             VerifySearchCount(1);
         }
 
@@ -373,7 +393,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Subject.Execute(new EpisodeSearchCommand(new List<int> { 1 }) { Trigger = CommandTrigger.Manual });
 
             VerifySearchCount(2);
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().Contain("guid4");
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().Contain("guid4");
         }
 
         [Test]
@@ -402,27 +422,27 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public void should_ignore_cached_releases_of_indexers_no_longer_enabled()
+        public void should_ignore_cached_queries_of_indexers_no_longer_enabled()
         {
-            _releases[1].IndexerId = 2;
             SearchAndFail("guid1");
 
-            RedownloadFailed();
+            Mocker.GetMock<IIndexerFactory>()
+                  .Setup(s => s.AutomaticSearchEnabled(true))
+                  .Returns(new List<IIndexer>());
 
-            VerifyGrabbed("guid3");
-            Mocker.GetMock<IDownloadService>()
-                  .Verify(v => v.DownloadReport(It.Is<RemoteEpisode>(r => r.Release.Guid == "guid2"), null), Times.Never());
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1).Should().BeNull();
         }
 
         [Test]
-        public void should_not_serve_interactive_search_from_cache_missing_results_of_an_indexer()
+        public void should_search_only_indexers_without_cached_query()
         {
+            SearchAndFail("guid1");
             GivenInteractiveOnlyIndexer();
 
-            SearchAndFail("guid1");
+            var result = Mocker.Resolve<ISearchForReleases>().InteractiveEpisodeSearch(1, false, false).GetAwaiter().GetResult();
 
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, true).Should().BeNull();
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Should().NotBeNull();
+            result.Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().BeEquivalentTo("guid1", "guid2", "guid3", "interactive");
+            VerifySearchCount(1);
         }
 
         [Test]
@@ -432,8 +452,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             Mocker.Resolve<ISearchForReleases>().EpisodeSearch(1, true, true, false).GetAwaiter().GetResult();
 
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, false).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().BeEquivalentTo("guid1", "guid2", "guid3");
-            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1, true).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().BeEquivalentTo("guid1", "guid2", "guid3", "interactive");
+            Mocker.Resolve<ISearchForReleases>().CachedEpisodeSearch(1).Decisions.Select(d => d.RemoteEpisode.Release.Guid).Should().BeEquivalentTo("guid1", "guid2", "guid3");
         }
 
         [Test]

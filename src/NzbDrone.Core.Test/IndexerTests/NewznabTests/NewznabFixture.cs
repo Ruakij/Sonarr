@@ -93,6 +93,43 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
             criteria.IndexerFailures[5].Should().BeOfType<WebException>();
         }
 
+        private SingleEpisodeSearchCriteria GetEpisodeCriteria(int episodeNumber)
+        {
+            return new SingleEpisodeSearchCriteria
+            {
+                Series = new Series { Title = "Series", TvdbId = 1 },
+                SceneTitles = new List<string> { "Series" },
+                Episodes = new List<Episode> { new Episode() },
+                SeasonNumber = 1,
+                EpisodeNumber = episodeNumber
+            };
+        }
+
+        private string GetSearchQueryKey(string apiKey, int episodeNumber = 1)
+        {
+            ((NewznabSettings)Subject.Definition.Settings).ApiKey = apiKey;
+
+            return Subject.GetSearchQueryKey(GetEpisodeCriteria(episodeNumber));
+        }
+
+        [Test]
+        public void should_build_search_query_key_without_credentials_and_with_sorted_params()
+        {
+            var key = GetSearchQueryKey("secretkey");
+
+            key.Should().StartWith("GET http://indexer.local/api?");
+            key.Should().NotContain("secretkey").And.NotContain("apikey");
+            key.Should().Be(GetSearchQueryKey("otherkey"));
+            key.Should().NotBe(GetSearchQueryKey("secretkey", 2));
+
+            foreach (var request in key.Split('\n').Where(l => l.StartsWith("GET ")))
+            {
+                var parameters = request.Split('?', 2)[1].Split('&');
+
+                parameters.Should().BeInAscendingOrder(StringComparer.Ordinal);
+            }
+        }
+
         [Test]
         public async Task should_parse_recent_feed_from_newznab_animetosho()
         {
