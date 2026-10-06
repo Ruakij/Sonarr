@@ -173,7 +173,7 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]", grabbedEpisodeIds))
+                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId), _processDownloadDecisions, _logger, $"episode [{episodeId}]", grabbedEpisodeIds))
                 {
                     continue;
                 }

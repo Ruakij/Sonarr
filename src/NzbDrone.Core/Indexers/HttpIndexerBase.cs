@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Http.CloudFlare;
 using NzbDrone.Core.Indexers.Exceptions;
@@ -119,6 +122,73 @@ namespace NzbDrone.Core.Indexers
             }
 
             return FetchReleases(g => g.GetSearchRequests(searchCriteria), false, searchCriteria);
+        }
+
+        public override string GetSearchQueryKey(SearchCriteriaBase searchCriteria)
+        {
+            if (!SupportsSearch)
+            {
+                return null;
+            }
+
+            var generator = GetRequestGenerator();
+
+            var chain = searchCriteria switch
+            {
+                SingleEpisodeSearchCriteria c => generator.GetSearchRequests(c),
+                SeasonSearchCriteria c => generator.GetSearchRequests(c),
+                DailyEpisodeSearchCriteria c => generator.GetSearchRequests(c),
+                DailySeasonSearchCriteria c => generator.GetSearchRequests(c),
+                AnimeEpisodeSearchCriteria c => generator.GetSearchRequests(c),
+                AnimeSeasonSearchCriteria c => generator.GetSearchRequests(c),
+                SpecialEpisodeSearchCriteria c => generator.GetSearchRequests(c),
+                _ => null
+            };
+
+            if (chain == null)
+            {
+                return null;
+            }
+
+            var credentials = GetCredentials();
+
+            // Only the first page of each request: later pages follow from it. Every tier counts, a tier is only sent when the ones before found nothing
+            var tiers = Enumerable.Range(0, chain.Tiers)
+                .Select(t => string.Join("\n", chain.GetTier(t).Select(r => r.FirstOrDefault()).Where(r => r != null).Select(r => NormalizeRequest(r.HttpRequest, credentials))))
+                .ToList();
+
+            return tiers.All(t => t.IsNullOrWhiteSpace()) ? null : string.Join("\n--\n", tiers);
+        }
+
+        // The values of the settings shown as private, like api keys, passkeys and user names
+        private List<string> GetCredentials()
+        {
+            return Settings.GetType().GetProperties()
+                .Where(p => p.GetCustomAttribute<FieldDefinitionAttribute>() is { Privacy: not PrivacyLevel.Normal })
+                .Select(p => p.GetValue(Settings) as string)
+                .Where(v => v.IsNotNullOrWhiteSpace())
+                .ToList();
+        }
+
+        // Query parameters sorted and those holding a credential dropped, credentials in a body removed as JSON strings
+        private static string NormalizeRequest(HttpRequest request, List<string> credentials)
+        {
+            var url = request.Url;
+
+            var query = (url.Query ?? string.Empty).Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(p => !credentials.Contains(Uri.UnescapeDataString(p.Split('=', 2).ElementAtOrDefault(1) ?? string.Empty)))
+                .OrderBy(p => p, StringComparer.Ordinal);
+
+            var body = request.ContentData == null ? string.Empty : Encoding.UTF8.GetString(request.ContentData);
+
+            foreach (var credential in credentials)
+            {
+                body = body.Replace("\"" + credential + "\"", "\"\"");
+            }
+
+            var port = url.Port.HasValue ? $":{url.Port}" : string.Empty;
+
+            return $"{request.Method} {url.Scheme}://{url.Host}{port}{url.Path}?{string.Join("&", query)} {body}".TrimEnd();
         }
 
         public override HttpRequest GetDownloadRequest(string link)

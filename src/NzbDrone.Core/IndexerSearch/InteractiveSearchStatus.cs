@@ -4,11 +4,12 @@ using System.Linq;
 
 namespace NzbDrone.Core.IndexerSearch
 {
-    // Ordered from best to worst, an indexer searched several times for one item shows its worst outcome
+    // Ordered from best to worst, an indexer searched several times for one item shows its worst outcome.
+    // Cached comes first, so an indexer with one sent query among cached ones counts as searched
     public enum IndexerSearchStatusType
     {
-        Searched,
         Cached,
+        Searched,
         Skipped,
         NotWaitedFor,
         Failed,
@@ -24,10 +25,10 @@ namespace NzbDrone.Core.IndexerSearch
         public int ReleaseCount { get; set; }
         public string Message { get; set; }
 
-        // When the results of a cached indexer were searched
+        // When the oldest cached query of the indexer was fetched
         public DateTime? CachedAt { get; set; }
 
-        // Duration of the single query this status belongs to, failed queries included
+        // Duration of the single sent query this status belongs to, failed queries included, null for a cached query
         public double? ResponseMs { get; set; }
 
         public int? QueryCount { get; set; }

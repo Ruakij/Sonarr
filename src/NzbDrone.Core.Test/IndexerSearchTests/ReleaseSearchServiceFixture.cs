@@ -673,9 +673,9 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         // Indexers with titles starting with "Required" have priority 1, "Failing" in the title makes the indexer fail after its delay
-        private void GivenIndexers(params (int DelayMs, string Title, int Score)[] indexers)
+        private List<string> GivenIndexers(params (int DelayMs, string Title, int Score)[] indexers)
         {
-            GivenIndexersWithPriority(indexers.Select(i => (i.Title.StartsWith("Required") ? 1 : IndexerDefinition.DefaultPriority, i.DelayMs, i.Title, i.Score)).ToArray());
+            return GivenIndexersWithPriority(indexers.Select(i => (i.Title.StartsWith("Required") ? 1 : IndexerDefinition.DefaultPriority, i.DelayMs, i.Title, i.Score)).ToArray());
         }
 
         // Returns the titles of the indexers that were queried
@@ -688,6 +688,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                 var mock = new Mock<IIndexer>();
 
                 mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Name = indexer.Title, Priority = indexer.Priority });
+                GivenQueryKeys(mock);
 
                 Func<Task<IList<ReleaseInfo>>> fetch = () =>
                 {
@@ -724,6 +725,28 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                 .Returns<List<ReleaseInfo>, SearchCriteriaBase, bool>((reports, criteria, reportProgress) => Decide(reports, criteria));
 
             return fetched;
+        }
+
+        private static void GivenQueryKeys(Mock<IIndexer> indexer)
+        {
+            indexer.Setup(s => s.GetSearchQueryKey(It.IsAny<SearchCriteriaBase>()))
+                   .Returns<SearchCriteriaBase>(c => $"{c.GetType().Name} {c}");
+        }
+
+        private void GivenQueryCache()
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+        }
+
+        private ICached<ReleaseSearchService.CachedQuery> GetQueryCache()
+        {
+            return Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedQuery>(typeof(ReleaseSearchService), "searchQueries");
+        }
+
+        private ReleaseSearchService.CachedQuery GetCachedQuery(int indexerId)
+        {
+            return GetQueryCache().Values.Single(q => q.Releases.Any(r => r.IndexerId == indexerId));
         }
 
         // Releases with a Size of at least 10 meet the cutoff, titles starting with "Rejected" are rejected and titles starting with "Episode" cover only the first searched episode
@@ -906,8 +929,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [Test]
         public async Task should_cache_releases_of_early_returned_search()
         {
-            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            GivenQueryCache();
 
             GivenEarlySearchReturn(0);
             GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
@@ -922,25 +944,36 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetSeries(_xemSeries.Id))
                   .Returns(_xemSeries);
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, false).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast");
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast");
         }
 
         [Test]
-        public async Task should_not_serve_early_returned_search_to_interactive_search()
+        public async Task should_cache_result_of_query_abandoned_by_early_return_when_it_completes()
         {
-            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
-
+            GivenQueryCache();
             GivenEarlySearchReturn(0);
-            GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Slow", 100));
+            var fetched = GivenIndexers((0, "Fast", 10), (300, "Slow", 100));
 
-            await SearchTitles();
+            var titles = await SearchTitles();
+
+            titles.Should().BeEquivalentTo("Fast");
+            GetQueryCache().Count.Should().Be(1);
+
+            var stopwatch = Stopwatch.StartNew();
+
+            while (GetQueryCache().Count < 2 && stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+            {
+                await Task.Delay(20);
+            }
+
+            titles.Should().BeEquivalentTo("Fast");
 
             Mocker.GetMock<IEpisodeService>()
                   .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
                   .Returns(_xemEpisodes.First());
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Fast", "Slow");
+            fetched.Should().HaveCount(2);
         }
 
         // The season query answers with a release named after the given title and score, every episode query with its own release after a short delay
@@ -958,6 +991,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             var mock = new Mock<IIndexer>();
             mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 1 });
+            GivenQueryKeys(mock);
 
             mock.Setup(s => s.Fetch(It.IsAny<AnimeSeasonSearchCriteria>()))
                 .Returns(Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo> { new ReleaseInfo { IndexerId = 1, Title = packTitle, Guid = packTitle, Size = packScore } }));
@@ -1051,22 +1085,17 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             episodeSearches.Should().HaveCount(3);
         }
 
-        [TestCase(10, true, false)]
-        [TestCase(5, false, false)]
-        [TestCase(5, true, true)]
-        public async Task should_serve_anime_season_search_to_interactive_search_only_with_all_its_queries(int packScore, bool allMonitored, bool served)
+        [Test]
+        public async Task should_serve_anime_season_search_from_its_cached_queries()
         {
-            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
-
+            GivenQueryCache();
             GivenEarlySearchReturn(0);
-            GivenAnimeSeason(3, "Pack", packScore);
-            _xemEpisodes.Last().Monitored = allMonitored;
+            var episodeSearches = GivenAnimeSeason(3, "Pack", 5);
 
             await AnimeSeasonSearchTitles();
 
-            Subject.CachedSeasonSearch(_xemSeries.Id, 1, false).Should().NotBeNull();
-            (Subject.CachedSeasonSearch(_xemSeries.Id, 1, true) != null).Should().Be(served);
+            Subject.CachedSeasonSearch(_xemSeries.Id, 1).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("Pack", "Episode 1", "Episode 2", "Episode 3");
+            episodeSearches.Should().HaveCount(3);
         }
 
         [Test]
@@ -1262,10 +1291,9 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
         [TestCase(10, new[] { "First" })]
         [TestCase(5, new[] { "First", "Second" })]
-        public async Task should_serve_priority_order_search_to_interactive_search(int firstScore, string[] titles)
+        public async Task should_serve_cached_queries_of_priority_order_search(int firstScore, string[] titles)
         {
-            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            GivenQueryCache();
 
             GivenEarlySearchReturn(0);
             GivenSearchIndexersInPriorityOrder();
@@ -1277,14 +1305,13 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
                   .Returns(_xemEpisodes.First());
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo(titles);
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo(titles);
         }
 
         [Test]
-        public async Task should_not_serve_priority_order_search_to_interactive_search_when_first_group_was_cut_short()
+        public async Task should_serve_answered_queries_when_first_group_was_cut_short()
         {
-            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            GivenQueryCache();
 
             GivenEarlySearchReturn(0);
             GivenSearchIndexersInPriorityOrder();
@@ -1296,7 +1323,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
                   .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
                   .Returns(_xemEpisodes.First());
 
-            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("First");
         }
 
         private void GivenInteractiveSearchStore()
@@ -1419,13 +1446,97 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             status.CachedAt.Should().NotBeNull();
             status.Indexers.Select(i => i.Status).Should().AllBeEquivalentTo(IndexerSearchStatusType.Cached);
-            status.Indexers.Select(i => i.CachedAt).Should().AllBeEquivalentTo(status.CachedAt);
+            status.Indexers.Should().OnlyContain(i => i.CachedAt.HasValue);
+            status.CachedAt.Should().Be(status.Indexers.Min(i => i.CachedAt));
+            status.Indexers.Select(i => i.QueryCount).Should().AllBeEquivalentTo((int?)null);
         }
 
         [Test]
-        public async Task should_search_only_remaining_indexers_and_merge_results()
+        public async Task should_send_only_uncached_queries_and_report_oldest_cached_at()
         {
             GivenInteractiveSearchStore();
+            GivenQueryCache();
+            GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10), (3, 0, "Third", 10));
+            var firstFetchedAt = DateTime.UtcNow.AddMinutes(-30);
+            var secondFetchedAt = DateTime.UtcNow.AddMinutes(-10);
+            GetCachedQuery(1).FetchedAt = firstFetchedAt;
+            GetCachedQuery(2).FetchedAt = secondFetchedAt;
+
+            var titles = await InteractiveSearchTitles();
+
+            fetched.Should().Equal("Third");
+            titles.Should().BeEquivalentTo("First", "Second", "Third");
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id);
+
+            status.Indexers.Select(i => i.Status).Should().Equal(IndexerSearchStatusType.Cached, IndexerSearchStatusType.Cached, IndexerSearchStatusType.Searched);
+            status.Indexers.Select(i => i.CachedAt).Should().Equal(firstFetchedAt, secondFetchedAt, null);
+            status.Indexers.Select(i => i.QueryCount).Should().Equal(null, null, 1);
+            status.CachedAt.Should().Be(firstFetchedAt);
+        }
+
+        [Test]
+        public async Task should_send_expired_query_again_without_extending_others()
+        {
+            GivenInteractiveSearchStore();
+            GivenQueryCache();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+
+            var secondFetchedAt = DateTime.UtcNow.AddMinutes(-59);
+            GetCachedQuery(1).FetchedAt = DateTime.UtcNow.AddMinutes(-61);
+            GetCachedQuery(2).FetchedAt = secondFetchedAt;
+
+            await InteractiveSearchTitles();
+
+            fetched.Should().Equal("First", "Second", "First");
+            InteractiveStatuses().Values.Should().Equal(IndexerSearchStatusType.Searched, IndexerSearchStatusType.Cached);
+            GetCachedQuery(1).FetchedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+            GetCachedQuery(2).FetchedAt.Should().Be(secondFetchedAt);
+        }
+
+        [Test]
+        public async Task should_share_cached_query_between_searches_sending_the_same_request()
+        {
+            GivenQueryCache();
+            GivenSeasonEpisodes();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10));
+            var indexer = Mocker.GetMock<IIndexerFactory>().Object.AutomaticSearchEnabled();
+            Mock.Get(indexer[0]).Setup(s => s.GetSearchQueryKey(It.IsAny<SearchCriteriaBase>())).Returns("same request");
+
+            await Subject.EpisodeSearch(_xemEpisodes[0], true, false);
+            var decisions = await Subject.EpisodeSearch(_xemEpisodes[1], true, false);
+
+            fetched.Should().HaveCount(1);
+            GetQueryCache().Count.Should().Be(1);
+            decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo("First");
+        }
+
+        [Test]
+        public async Task should_not_cache_failed_queries()
+        {
+            GivenQueryCache();
+            var fetched = GivenIndexers((0, "Fast", 10), (0, "Failing", 10));
+
+            await SearchTitles();
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+
+            fetched.Should().Equal("Fast", "Failing", "Failing");
+            GetQueryCache().Count.Should().Be(1);
+            ExceptionVerification.ExpectedErrors(2);
+        }
+
+        [TestCase(0)]
+        [TestCase(60)]
+        public async Task should_search_only_remaining_indexers_and_merge_results(int cacheLifetime)
+        {
+            GivenInteractiveSearchStore();
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(cacheLifetime);
             GivenEarlySearchReturn(0);
             GivenSearchIndexersInPriorityOrder();
             var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10), (3, 0, "Third", 10));
@@ -1440,25 +1551,6 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
-        public async Task should_not_extend_cache_lifetime_when_searching_remaining()
-        {
-            GivenInteractiveSearchStore();
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
-            GivenEarlySearchReturn(0);
-            GivenSearchIndexersInPriorityOrder();
-            GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
-
-            await InteractiveSearchTitles();
-
-            var cache = Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedSearch>(typeof(ReleaseSearchService), "searchResults");
-            cache.Find("episode:1").SearchedAt = DateTime.UtcNow.AddMinutes(-61);
-
-            (await InteractiveSearchTitles(searchRemaining: true)).Should().BeEquivalentTo("First", "Second");
-
-            cache.Find("episode:1").Should().BeNull();
-        }
-
-        [Test]
         public async Task should_search_all_indexers_again_on_refresh()
         {
             GivenInteractiveSearchStore();
@@ -1466,10 +1558,12 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
 
             await InteractiveSearchTitles();
+            GetCachedQuery(1).FetchedAt = DateTime.UtcNow.AddMinutes(-30);
             await InteractiveSearchTitles(refresh: true);
 
             fetched.Should().HaveCount(4);
             InteractiveStatuses().Values.Should().AllBeEquivalentTo(IndexerSearchStatusType.Searched);
+            GetCachedQuery(1).FetchedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
         }
 
         private static int InterlockedMax(ref int target, int value)

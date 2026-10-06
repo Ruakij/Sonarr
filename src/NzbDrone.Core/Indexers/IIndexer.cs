@@ -22,5 +22,8 @@ namespace NzbDrone.Core.Indexers
         Task<IList<ReleaseInfo>> Fetch(AnimeSeasonSearchCriteria searchCriteria);
         Task<IList<ReleaseInfo>> Fetch(SpecialEpisodeSearchCriteria searchCriteria);
         HttpRequest GetDownloadRequest(string link);
+
+        // Identifies the requests a search sends, null when its results must not be cached
+        string GetSearchQueryKey(SearchCriteriaBase searchCriteria);
     }
 }

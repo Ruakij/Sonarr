@@ -23,7 +23,7 @@ namespace NzbDrone.Core.IndexerSearch
         public void Execute(SeasonSearchCommand message)
         {
             if (message.FallbackToIndexers &&
-                EpisodeSearchService.GrabCachedRelease(() => _releaseSearchService.CachedSeasonSearch(message.SeriesId, message.SeasonNumber, false), _processDownloadDecisions, _logger, $"season {message.SeasonNumber} of [{message.SeriesId}]"))
+                EpisodeSearchService.GrabCachedRelease(() => _releaseSearchService.CachedSeasonSearch(message.SeriesId, message.SeasonNumber), _processDownloadDecisions, _logger, $"season {message.SeasonNumber} of [{message.SeriesId}]"))
             {
                 return;
             }
