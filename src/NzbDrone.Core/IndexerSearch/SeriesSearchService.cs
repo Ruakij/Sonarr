@@ -51,7 +51,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 e.AirDateUtc.Value.Before(DateTime.UtcNow))
                     .ToList();
 
-                downloadedCount = EpisodeSearchService.SearchAndProcess(episodes, _configService.EpisodeSearchConcurrency, _processDownloadDecisions, episode => _releaseSearchService.EpisodeSearch(episode, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
+                downloadedCount = EpisodeSearchService.SearchAndProcess(episodes, _configService.SearchConcurrency, _processDownloadDecisions, episode => _releaseSearchService.EpisodeSearch(episode, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
             }
             else
             {
@@ -62,7 +62,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                 var seasons = series.Seasons.Where(s => s.Monitored).OrderBy(s => s.SeasonNumber);
 
-                downloadedCount = EpisodeSearchService.SearchAndProcess(seasons, _configService.EpisodeSearchConcurrency, _processDownloadDecisions, season => _releaseSearchService.SeasonSearch(message.SeriesId, season.SeasonNumber, false, true, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
+                downloadedCount = EpisodeSearchService.SearchAndProcess(seasons, _configService.SearchConcurrency, _processDownloadDecisions, season => _releaseSearchService.SeasonSearch(message.SeriesId, season.SeasonNumber, false, true, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
             }
 
             _logger.ProgressInfo("Series search completed. {0} reports downloaded.", downloadedCount);

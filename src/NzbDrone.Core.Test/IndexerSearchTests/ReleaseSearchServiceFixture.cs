@@ -1039,7 +1039,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var running = 0;
             var maxRunning = 0;
 
-            Mocker.GetMock<IConfigService>().SetupGet(s => s.EpisodeSearchConcurrency).Returns(concurrency);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchConcurrency).Returns(concurrency);
 
             var episodeSearches = GivenAnimeSeason(
                 7,

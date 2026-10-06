@@ -23,7 +23,7 @@ namespace Sonarr.Api.V3.Config
             SharedValidator.RuleFor(c => c.EarlySearchReturnMinimumWait)
                            .GreaterThanOrEqualTo(0);
 
-            SharedValidator.RuleFor(c => c.EpisodeSearchConcurrency)
+            SharedValidator.RuleFor(c => c.SearchConcurrency)
                            .GreaterThanOrEqualTo(1);
 
             SharedValidator.RuleFor(c => c.SearchResultCacheLifetime)

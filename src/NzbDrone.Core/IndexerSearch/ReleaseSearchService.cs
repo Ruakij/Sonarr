@@ -581,7 +581,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             // Indexer rate limits reserve their request slots atomically, so concurrent searches still keep each indexer's interval
-            using var throttle = new SemaphoreSlim(Math.Max(1, _configService.EpisodeSearchConcurrency));
+            using var throttle = new SemaphoreSlim(Math.Max(1, _configService.SearchConcurrency));
 
             var results = await Task.WhenAll(episodes.Select(async episode =>
             {
