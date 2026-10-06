@@ -28,16 +28,15 @@ namespace NzbDrone.Core.IndexerSearch
         // When the oldest cached query of the indexer was fetched
         public DateTime? CachedAt { get; set; }
 
-        // Duration of the single sent query this status belongs to, failed queries included, null for a cached query
-        public double? ResponseMs { get; set; }
+        // Durations of the HTTP requests of the query this status belongs to, pages and failed requests included,
+        // an indexer without HTTP requests of its own counts one per query. Null for a query that was not sent or not waited for
+        public List<double> RequestDurationsMs { get; set; }
 
-        // HTTP requests sent to the indexer, pages included
+        // QueryCount and MedianResponseMs cover the HTTP requests of the search, pages and failed requests included
         public int? QueryCount { get; set; }
-
-        // Median duration of the sent queries, each query taking all its pages
         public int? MedianResponseMs { get; set; }
 
-        // Successful queries of the indexer across all searches, automatic ones included
+        // The requests of the successful queries of the indexer across all searches, automatic ones included
         public int? HistoryCount { get; set; }
         public int? HistoryMedianMs { get; set; }
         public int? HistoryLowMs { get; set; }

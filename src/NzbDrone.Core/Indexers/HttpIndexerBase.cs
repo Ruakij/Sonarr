@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -228,9 +229,17 @@ namespace NzbDrone.Core.Indexers
                         {
                             url = request.Url.FullUri;
 
-                            searchCriteria?.IndexerRequestCounts.AddOrUpdate(Definition.Id, 1, (_, count) => count + 1);
+                            IList<ReleaseInfo> page;
+                            var stopwatch = Stopwatch.StartNew();
 
-                            var page = await FetchPage(request, parser);
+                            try
+                            {
+                                page = await FetchPage(request, parser);
+                            }
+                            finally
+                            {
+                                searchCriteria?.AddRequestDuration(Definition.Id, stopwatch.Elapsed);
+                            }
 
                             pagedReleases.AddRange(page);
 
