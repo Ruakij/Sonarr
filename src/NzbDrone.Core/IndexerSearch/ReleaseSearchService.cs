@@ -94,7 +94,7 @@ namespace NzbDrone.Core.IndexerSearch
             var key = EpisodeCacheKey(episode.Id);
             var episodes = new List<Episode> { episode };
 
-            var cached = useCache ? FindCachedSearch(key, episode.SeriesId, episodes, false, userInvokedSearch, interactiveSearch) : null;
+            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), episode.SeriesId, episodes, false, userInvokedSearch, interactiveSearch) : null;
 
             return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchEpisode(episode, userInvokedSearch, interactiveSearch))).Decisions;
         }
@@ -105,7 +105,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var key = SeasonCacheKey(seriesId, seasonNumber);
 
-            var cached = useCache ? FindCachedSearch(key, seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch) : null;
+            var cached = useCache ? FindCachedSearch(FindCachedEntry(key), seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch) : null;
 
             return cached?.Decisions ?? (await SearchAndCache(key, episodes, () => SearchSeason(seriesId, seasonNumber, episodes, monitoredOnly, userInvokedSearch, interactiveSearch))).Decisions;
         }
@@ -171,11 +171,12 @@ namespace NzbDrone.Core.IndexerSearch
                 return new CachedSearchResult(Decide(interactiveSearch.Entry, seriesId, episodes, false, true, true, false).Decisions, interactiveSearch.CachedAt);
             }
 
-            var cached = refresh ? null : FindCachedSearch(key, seriesId, episodes, false, true, true);
+            var cachedEntry = refresh ? null : FindCachedEntry(key);
+            var cached = FindCachedSearch(cachedEntry, seriesId, episodes, false, true, true);
 
             if (cached != null)
             {
-                SetInteractiveSearch(key, new InteractiveSearch { Entry = FindCachedEntry(key), SeriesId = seriesId, CachedAt = cached.SearchedAt, SearchedIndexerIds = new HashSet<int>() });
+                SetInteractiveSearch(key, new InteractiveSearch { Entry = cachedEntry, SeriesId = seriesId, CachedAt = cached.SearchedAt, SearchedIndexerIds = new HashSet<int>() });
 
                 return cached;
             }
@@ -242,28 +243,28 @@ namespace NzbDrone.Core.IndexerSearch
 
         public CachedSearchResult CachedEpisodeSearch(int episodeId, bool interactiveSearch)
         {
-            var key = EpisodeCacheKey(episodeId);
+            var entry = FindCachedEntry(EpisodeCacheKey(episodeId));
 
-            if (FindCachedEntry(key) == null)
+            if (entry == null)
             {
                 return null;
             }
 
             var episode = _episodeService.GetEpisode(episodeId);
 
-            return FindCachedSearch(key, episode.SeriesId, new List<Episode> { episode }, false, interactiveSearch, interactiveSearch);
+            return FindCachedSearch(entry, episode.SeriesId, new List<Episode> { episode }, false, interactiveSearch, interactiveSearch);
         }
 
         public CachedSearchResult CachedSeasonSearch(int seriesId, int seasonNumber, bool interactiveSearch)
         {
-            var key = SeasonCacheKey(seriesId, seasonNumber);
+            var entry = FindCachedEntry(SeasonCacheKey(seriesId, seasonNumber));
 
-            if (FindCachedEntry(key) == null)
+            if (entry == null)
             {
                 return null;
             }
 
-            return FindCachedSearch(key, seriesId, _episodeService.GetEpisodesBySeason(seriesId, seasonNumber), !interactiveSearch, interactiveSearch, interactiveSearch);
+            return FindCachedSearch(entry, seriesId, _episodeService.GetEpisodesBySeason(seriesId, seasonNumber), !interactiveSearch, interactiveSearch, interactiveSearch);
         }
 
         private static string EpisodeCacheKey(int episodeId) => $"episode:{episodeId}";
@@ -275,10 +276,8 @@ namespace NzbDrone.Core.IndexerSearch
             return _configService.SearchResultCacheLifetime > 0 ? _searchResultCache.Find(key) : null;
         }
 
-        private CachedSearchResult FindCachedSearch(string key, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
+        private CachedSearchResult FindCachedSearch(CachedSearch entry, int seriesId, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch)
         {
-            var entry = FindCachedEntry(key);
-
             if (entry == null || !episodes.All(e => entry.EpisodeIds.Contains(e.Id)))
             {
                 return null;
