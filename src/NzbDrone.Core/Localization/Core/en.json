@@ -1080,6 +1080,7 @@
   "InteractiveSearchSearchAgainTooltip": "Ignores the cache and searches every indexer again",
   "InteractiveSearchSearchRemainingTooltip": "Searches the indexers that were skipped, not waited for or failed in this search and adds their results",
   "InteractiveSearchSeason": "Interactive search for all episodes in this season",
+  "InteractiveSearchShowAllResults": "Show all {count} results",
   "InteractiveSearchStatus": "Search Status",
   "InteractiveSearchStatusCacheNote": "**Search Result Cache** is enabled: results of a search from the last {minutes} minutes are reused. Search Again queries all indexers.",
   "InteractiveSearchStatusCachedAge": "From cache, {minutes} min",
