@@ -48,11 +48,7 @@ namespace NzbDrone.Core.Blocklisting
 
                 if (torrentInfo.InfoHash.IsNotNullOrWhiteSpace())
                 {
-                    var blocklistedByTorrentInfohash = InRunCache()
-                        ? SeriesBlocklist(seriesId).Where(b => SqliteLikeContains(b.TorrentInfoHash, torrentInfo.InfoHash))
-                        : _blocklistRepository.BlocklistedByTorrentInfoHash(seriesId, torrentInfo.InfoHash);
-
-                    return blocklistedByTorrentInfohash.Any(b => SameTorrent(b, torrentInfo));
+                    return BlocklistedByTorrentInfoHash(seriesId, torrentInfo.InfoHash).Any(b => SameTorrent(b, torrentInfo));
                 }
 
                 return BlocklistedByTitle(seriesId, release.Title)
@@ -65,76 +61,31 @@ namespace NzbDrone.Core.Blocklisting
                 .Any(b => SameNzb(b, release));
         }
 
-        // Within a decision run the blocklist of the series is loaded once and matched in memory. Only for SQLite,
-        // whose LIKE rules are matched exactly; PostgreSQL ILIKE depends on the collation and keeps querying.
-        private bool InRunCache()
-        {
-            return DecisionRunCache.Active && _database.DatabaseType == DatabaseType.SQLite;
-        }
-
-        private List<Blocklist> SeriesBlocklist(int seriesId)
-        {
-            return DecisionRunCache.GetOrAdd("BlocklistBySeries", seriesId, () => _blocklistRepository.BlocklistedBySeries(seriesId));
-        }
-
+        // A decision run checks every release against the series blocklist, so SQLite loads it once per run and matches
+        // like the LIKE query does. PostgreSQL keeps the query, as its ILIKE case folding depends on the server locale.
         private IEnumerable<Blocklist> BlocklistedByTitle(int seriesId, string title)
         {
-            return InRunCache()
-                ? SeriesBlocklist(seriesId).Where(b => SqliteLikeContains(b.SourceTitle, title))
-                : _blocklistRepository.BlocklistedByTitle(seriesId, title);
+            if (_database.DatabaseType == DatabaseType.PostgreSQL)
+            {
+                return _blocklistRepository.BlocklistedByTitle(seriesId, title);
+            }
+
+            return GetSeriesBlocklist(seriesId).Where(b => SqliteLike.Contains(b.SourceTitle, title));
         }
 
-        // value LIKE '%' || search || '%' as SQLite evaluates it: % and _ in the search are wildcards,
-        // _ matches one character, only ASCII letters compare case-insensitively and NULL never matches.
-        public static bool SqliteLikeContains(string value, string search)
+        private IEnumerable<Blocklist> BlocklistedByTorrentInfoHash(int seriesId, string infoHash)
         {
-            if (value == null || search == null)
+            if (_database.DatabaseType == DatabaseType.PostgreSQL)
             {
-                return false;
+                return _blocklistRepository.BlocklistedByTorrentInfoHash(seriesId, infoHash);
             }
 
-            var text = value.EnumerateRunes().Select(FoldAscii).ToArray();
-            var pattern = ("%" + search + "%").EnumerateRunes().Select(FoldAscii).ToArray();
-
-            var t = 0;
-            var p = 0;
-            var star = -1;
-            var starText = 0;
-
-            while (t < text.Length)
-            {
-                if (p < pattern.Length && pattern[p] == '%')
-                {
-                    star = p++;
-                    starText = t;
-                }
-                else if (p < pattern.Length && (pattern[p] == '_' || pattern[p] == text[t]))
-                {
-                    p++;
-                    t++;
-                }
-                else if (star >= 0)
-                {
-                    p = star + 1;
-                    t = ++starText;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            while (p < pattern.Length && pattern[p] == '%')
-            {
-                p++;
-            }
-
-            return p == pattern.Length;
+            return GetSeriesBlocklist(seriesId).Where(b => SqliteLike.Contains(b.TorrentInfoHash, infoHash));
         }
 
-        private static int FoldAscii(System.Text.Rune rune)
+        private List<Blocklist> GetSeriesBlocklist(int seriesId)
         {
-            return rune.Value is >= 'A' and <= 'Z' ? rune.Value + 32 : rune.Value;
+            return DecisionRunCache.GetOrAdd("BlocklistBySeries", seriesId, () => _blocklistRepository.BlocklistedBySeries(seriesId));
         }
 
         public bool BlocklistedTorrentHash(int seriesId, string hash)
