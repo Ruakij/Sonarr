@@ -128,13 +128,20 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var processed = await processDownloadDecisions.ProcessDecisions(decisions.Where(d => d.RemoteEpisode.Episodes.None(e => grabbedEpisodeIds.Contains(e.Id))).ToList());
-
-                grabbedEpisodeIds.UnionWith(processed.Grabbed.SelectMany(d => d.RemoteEpisode.Episodes).Select(e => e.Id));
-                grabbedCount += processed.Grabbed.Count;
+                grabbedCount += (await ProcessNotGrabbed(processDownloadDecisions, decisions, grabbedEpisodeIds)).Grabbed.Count;
             }
 
             return grabbedCount;
+        }
+
+        // Skips releases for episodes grabbed earlier, so a multi-episode release is grabbed once
+        private static async Task<ProcessedDecisions> ProcessNotGrabbed(IProcessDownloadDecisions processDownloadDecisions, List<DownloadDecision> decisions, HashSet<int> grabbedEpisodeIds)
+        {
+            var processed = await processDownloadDecisions.ProcessDecisions(decisions.Where(d => d.RemoteEpisode.Episodes.None(e => grabbedEpisodeIds.Contains(e.Id))).ToList());
+
+            grabbedEpisodeIds.UnionWith(processed.Grabbed.SelectMany(d => d.RemoteEpisode.Episodes).Select(e => e.Id));
+
+            return processed;
         }
 
         private bool IsMonitored(bool episodeMonitored, bool seriesMonitored)
@@ -157,21 +164,28 @@ namespace NzbDrone.Core.IndexerSearch
                 return;
             }
 
+            var grabbedEpisodeIds = new HashSet<int>();
+
             foreach (var episodeId in message.EpisodeIds)
             {
-                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]"))
+                if (grabbedEpisodeIds.Contains(episodeId))
+                {
+                    continue;
+                }
+
+                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId, false), _processDownloadDecisions, _logger, $"episode [{episodeId}]", grabbedEpisodeIds))
                 {
                     continue;
                 }
 
                 var decisions = _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, false).GetAwaiter().GetResult();
-                var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
+                var processed = ProcessNotGrabbed(_processDownloadDecisions, decisions, grabbedEpisodeIds).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
             }
         }
 
-        internal static bool GrabCachedRelease(Func<CachedSearchResult> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item)
+        internal static bool GrabCachedRelease(Func<CachedSearchResult> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item, HashSet<int> grabbedEpisodeIds = null)
         {
             try
             {
@@ -182,7 +196,7 @@ namespace NzbDrone.Core.IndexerSearch
                     return false;
                 }
 
-                var processed = processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
+                var processed = ProcessNotGrabbed(processDownloadDecisions, decisions, grabbedEpisodeIds ?? new HashSet<int>()).GetAwaiter().GetResult();
 
                 if (processed.Grabbed.Any() || processed.Pending.Any())
                 {
