@@ -1817,7 +1817,7 @@
   "SearchAll": "Search All",
   "SearchByTvdbId": "You can also search using TVDB ID of a show. eg. tvdb:71663",
   "SearchConcurrency": "Search Concurrency",
-  "SearchConcurrencyHelpText": "Number of searches run at the same time, for example episodes of an anime season, seasons of a series, or missing and cutoff searches. Grabs are still processed one after another.",
+  "SearchConcurrencyHelpText": "Number of indexer searches a search runs at the same time, shared by all its parts, for example episodes of an anime season, seasons of a series, or missing and cutoff searches. Grabs are still processed one after another.",
   "SearchFailedError": "Search failed, please try again later.",
   "SearchForAllMissingEpisodes": "Search for all missing episodes",
   "SearchForAllMissingEpisodesConfirmationCount": "Are you sure you want to search for all {totalRecords} missing episodes?",

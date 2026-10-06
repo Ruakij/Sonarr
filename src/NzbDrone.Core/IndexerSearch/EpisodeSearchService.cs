@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -101,10 +102,13 @@ namespace NzbDrone.Core.IndexerSearch
         }
 
         // Runs up to `concurrency` searches at once and processes their decisions one after another in the given order.
+        // All indexer queries of the searches share `concurrency` slots, however many queries a single search makes.
         // Searches running ahead decide before earlier grabs reach the queue, so releases for episodes grabbed earlier are dropped,
         // a multi-season pack found by several season searches is grabbed once. A search returning null is skipped.
         internal static async Task<int> SearchAndProcess<T>(IEnumerable<T> items, int concurrency, IProcessDownloadDecisions processDownloadDecisions, Func<T, Task<List<DownloadDecision>>> search)
         {
+            ReleaseSearchService.SearchSlots.Value = new SemaphoreSlim(Math.Max(1, concurrency));
+
             var pending = items.ToList();
             var searches = new List<Task<List<DownloadDecision>>>();
             var grabbedEpisodeIds = new HashSet<int>();

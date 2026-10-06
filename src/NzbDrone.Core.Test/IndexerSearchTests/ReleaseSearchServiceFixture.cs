@@ -15,6 +15,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -1100,6 +1101,31 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             maxRunning.Should().Be(2);
             years.Should().BeEquivalentTo(new[] { 2005, 2006, 2007, 2008 });
+        }
+
+        [Test]
+        public async Task should_share_concurrency_between_all_searches_of_one_command()
+        {
+            var running = 0;
+            var maxRunning = 0;
+
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchConcurrency).Returns(3);
+
+            var episodeSearches = GivenAnimeSeason(
+                4,
+                "Pack",
+                5,
+                () => InterlockedMax(ref maxRunning, Interlocked.Increment(ref running)),
+                () => Interlocked.Decrement(ref running));
+
+            Mocker.GetMock<IProcessDownloadDecisions>()
+                  .Setup(s => s.ProcessDecisions(It.IsAny<List<DownloadDecision>>()))
+                  .Returns(Task.FromResult(new ProcessedDecisions(new List<DownloadDecision>(), new List<DownloadDecision>(), new List<DownloadDecision>())));
+
+            await EpisodeSearchService.SearchAndProcess(new[] { 1, 2, 3 }, 3, Mocker.GetMock<IProcessDownloadDecisions>().Object, _ => Subject.SeasonSearch(_xemSeries.Id, 1, false, true, true, false, false));
+
+            maxRunning.Should().Be(3);
+            episodeSearches.Should().HaveCount(12);
         }
 
         private static int InterlockedMax(ref int target, int value)

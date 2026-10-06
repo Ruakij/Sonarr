@@ -43,6 +43,10 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly ICached<CachedSearch> _searchResultCache;
         private readonly AsyncLocal<CachedSearch> _currentSearch = new AsyncLocal<CachedSearch>();
+
+        // Search Concurrency is one limit per search command: every indexer query of the command takes a slot of the same semaphore.
+        // Only the indexer query holds a slot, the searches around it never wait on one, so nested searches cannot deadlock
+        internal static readonly AsyncLocal<SemaphoreSlim> SearchSlots = new AsyncLocal<SemaphoreSlim>();
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -75,6 +79,8 @@ namespace NzbDrone.Core.IndexerSearch
 
         public async Task<List<DownloadDecision>> EpisodeSearch(Episode episode, bool userInvokedSearch, bool interactiveSearch, bool useCache = true)
         {
+            SearchSlots.Value ??= new SemaphoreSlim(Math.Max(1, _configService.SearchConcurrency));
+
             var key = EpisodeCacheKey(episode.Id);
             var episodes = new List<Episode> { episode };
 
@@ -85,6 +91,8 @@ namespace NzbDrone.Core.IndexerSearch
 
         public async Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true)
         {
+            SearchSlots.Value ??= new SemaphoreSlim(Math.Max(1, _configService.SearchConcurrency));
+
             var key = SeasonCacheKey(seriesId, seasonNumber);
 
             var cached = useCache ? FindCachedSearch(key, seriesId, episodes, monitoredOnly, userInvokedSearch, interactiveSearch) : null;
@@ -562,25 +570,11 @@ namespace NzbDrone.Core.IndexerSearch
             return await SearchAll(episodes, search);
         }
 
-        // Runs up to Search Concurrency searches at once, the decisions keep the order of the items.
+        // Starts all searches at once, SearchSlots limits how many of their indexer queries run. The decisions keep the order of the items.
         // Indexer rate limits reserve their request slots atomically, so concurrent searches still keep each indexer's interval
-        private async Task<List<DownloadDecision>> SearchAll<T>(IEnumerable<T> items, Func<T, Task<List<DownloadDecision>>> search)
+        private static async Task<List<DownloadDecision>> SearchAll<T>(IEnumerable<T> items, Func<T, Task<List<DownloadDecision>>> search)
         {
-            using var throttle = new SemaphoreSlim(Math.Max(1, _configService.SearchConcurrency));
-
-            var results = await Task.WhenAll(items.Select(async item =>
-            {
-                await throttle.WaitAsync();
-
-                try
-                {
-                    return await search(item);
-                }
-                finally
-                {
-                    throttle.Release();
-                }
-            }));
+            var results = await Task.WhenAll(items.Select(search));
 
             return results.SelectMany(d => d).ToList();
         }
@@ -685,28 +679,41 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var indexers = GetIndexers(criteriaBase);
 
-            _logger.ProgressInfo("Searching indexers for {0}. {1} active indexers", criteriaBase, indexers.Count);
-
-            var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
-
             List<DownloadDecision> decisions;
             var reports = new List<ReleaseInfo>();
             var answeredIndexerIds = new HashSet<int>();
+            var slots = SearchSlots.Value;
 
-            if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
+            if (slots != null)
             {
-                decisions = await CollectDecisionsWithEarlyReturn(indexers, tasks, criteriaBase, reports, answeredIndexerIds);
+                await slots.WaitAsync();
             }
-            else
+
+            try
             {
-                var batch = await Task.WhenAll(tasks);
+                _logger.ProgressInfo("Searching indexers for {0}. {1} active indexers", criteriaBase, indexers.Count);
 
-                reports.AddRange(batch.SelectMany(x => x));
-                answeredIndexerIds.UnionWith(indexers.Select(i => i.Definition.Id));
+                var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
 
-                _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
+                if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
+                {
+                    decisions = await CollectDecisionsWithEarlyReturn(indexers, tasks, criteriaBase, reports, answeredIndexerIds);
+                }
+                else
+                {
+                    var batch = await Task.WhenAll(tasks);
 
-                decisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase);
+                    reports.AddRange(batch.SelectMany(x => x));
+                    answeredIndexerIds.UnionWith(indexers.Select(i => i.Definition.Id));
+
+                    _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
+
+                    decisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase);
+                }
+            }
+            finally
+            {
+                slots?.Release();
             }
 
             var currentSearch = _currentSearch.Value;
