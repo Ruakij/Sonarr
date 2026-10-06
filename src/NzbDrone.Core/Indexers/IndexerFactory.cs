@@ -35,6 +35,8 @@ namespace NzbDrone.Core.Indexers
             _logger = logger;
         }
 
+        protected override bool CacheDefinitions => true;
+
         protected override List<IndexerDefinition> Active()
         {
             return base.Active().Where(c => c.Enable).ToList();
