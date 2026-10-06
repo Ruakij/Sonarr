@@ -154,7 +154,7 @@ namespace NzbDrone.Core.IndexerSearch
             var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
 
             // Searches started by hand query the indexers, their results still refresh the cache
-            var grabbed = SearchAndProcess(message.EpisodeIds, _configService.SearchConcurrency, _processDownloadDecisions, episodeId => _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
+            var grabbed = SearchAndProcess(message.EpisodeIds, _configService.SearchConcurrency, _processDownloadDecisions, episodeId => _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false)).GetAwaiter().GetResult();
 
             _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", grabbed);
         }

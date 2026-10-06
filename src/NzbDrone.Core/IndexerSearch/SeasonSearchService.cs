@@ -25,7 +25,7 @@ namespace NzbDrone.Core.IndexerSearch
             var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
 
             // Searches started by hand query the indexers, their results still refresh the cache
-            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, userInvokedSearch, false, !userInvokedSearch).GetAwaiter().GetResult();
+            var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, message.SeasonNumber, false, true, userInvokedSearch, false).GetAwaiter().GetResult();
             var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
             _logger.ProgressInfo("Season search completed. {0} reports downloaded.", processed.Grabbed.Count);
