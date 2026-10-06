@@ -1051,6 +1051,24 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             episodeSearches.Should().HaveCount(3);
         }
 
+        [TestCase(10, true, false)]
+        [TestCase(5, false, false)]
+        [TestCase(5, true, true)]
+        public async Task should_serve_anime_season_search_to_interactive_search_only_with_all_its_queries(int packScore, bool allMonitored, bool served)
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+
+            GivenEarlySearchReturn(0);
+            GivenAnimeSeason(3, "Pack", packScore);
+            _xemEpisodes.Last().Monitored = allMonitored;
+
+            await AnimeSeasonSearchTitles();
+
+            Subject.CachedSeasonSearch(_xemSeries.Id, 1, false).Should().NotBeNull();
+            (Subject.CachedSeasonSearch(_xemSeries.Id, 1, true) != null).Should().Be(served);
+        }
+
         [Test]
         public async Task should_search_episodes_when_early_search_return_disabled()
         {
