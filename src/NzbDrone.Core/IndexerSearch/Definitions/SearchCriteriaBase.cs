@@ -29,6 +29,9 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
 
         public ConcurrentDictionary<int, TimeSpan> IndexerResponseTimes { get; } = new ConcurrentDictionary<int, TimeSpan>();
 
+        // HTTP requests sent per indexer id, pages included
+        public ConcurrentDictionary<int, int> IndexerRequestCounts { get; } = new ConcurrentDictionary<int, int>();
+
         public List<string> AllSceneTitles => SceneTitles.Concat(CleanSceneTitles).Distinct().ToList();
         public List<string> CleanSceneTitles => SceneTitles.Select(GetCleanSceneTitle).Distinct().ToList();
 

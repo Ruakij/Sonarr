@@ -115,7 +115,7 @@ function getAgeMinutes(cachedAt: string) {
 }
 
 // Translations mark setting names with **
-function withBold(text: string): ReactNode[] {
+function renderBold(text: string): ReactNode[] {
   return text
     .split('**')
     .map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
@@ -134,23 +134,38 @@ function getTime(indexer: IndexerSearchStatus) {
 }
 
 function getTimeTooltip(indexer: IndexerSearchStatus) {
+  if (indexer.medianResponseMs == null) {
+    return undefined;
+  }
+
+  const median = formatSeconds(indexer.medianResponseMs);
+  const queryCount = indexer.queryCount ?? 1;
+
+  const tooltip =
+    queryCount === 1
+      ? translate('InteractiveSearchStatusTimeTooltipSingle', { median })
+      : translate('InteractiveSearchStatusTimeTooltipMultiple', {
+          queryCount,
+          median,
+        });
+
   if (
-    indexer.medianResponseMs == null ||
+    !indexer.historyCount ||
     indexer.historyMedianMs == null ||
     indexer.historyLowMs == null ||
     indexer.historyHighMs == null
   ) {
-    return undefined;
+    return tooltip;
   }
 
-  return translate('InteractiveSearchStatusTimeTooltip', {
-    queryCount: indexer.queryCount ?? 0,
-    median: formatSeconds(indexer.medianResponseMs),
-    historyCount: indexer.historyCount ?? 0,
+  const history = translate('InteractiveSearchStatusTimeTooltipHistory', {
+    historyCount: indexer.historyCount,
     historyMedian: formatSeconds(indexer.historyMedianMs),
     historyLow: formatSeconds(indexer.historyLowMs),
     historyHigh: formatSeconds(indexer.historyHighMs),
   });
+
+  return `${tooltip}. ${history}`;
 }
 
 interface InteractiveSearchStatusProps {
@@ -204,6 +219,11 @@ function InteractiveSearchStatus({
     options?.earlySearchReturn && options.earlySearchReturnRequiredPriority > 0
       ? options.earlySearchReturnRequiredPriority
       : 0;
+
+  // Priority groups only exist when indexers are searched in priority order
+  const hasGroups = Boolean(
+    options?.earlySearchReturn && options.searchIndexersInPriorityOrder
+  );
   const getGroup = (indexer: IndexerSearchStatus) =>
     Math.max(indexer.priority, requiredPriority);
   const sortedIndexers = [...indexers].sort(
@@ -264,7 +284,8 @@ function InteractiveSearchStatus({
                       key={indexer.indexerId}
                       className={classNames(
                         styles.row,
-                        index > 0 &&
+                        hasGroups &&
+                          index > 0 &&
                           getGroup(indexer) !==
                             getGroup(sortedIndexers[index - 1]) &&
                           styles.groupStart
@@ -281,20 +302,19 @@ function InteractiveSearchStatus({
                         {indexer.priority}
                       </TableRowCell>
                       <TableRowCell>
+                        <Label kind={statusKinds[indexer.status]}>
+                          {translate(statusLabelKeys[indexer.status])}
+                        </Label>
                         {indexer.status === 'cached' && indexer.cachedAt ? (
-                          <Label
-                            kind={statusKinds.cached}
+                          <span
+                            className={styles.age}
                             title={new Date(indexer.cachedAt).toLocaleString()}
                           >
-                            {translate('InteractiveSearchStatusCachedAge', {
+                            {translate('InteractiveSearchStatusCacheAge', {
                               minutes: getAgeMinutes(indexer.cachedAt),
                             })}
-                          </Label>
-                        ) : (
-                          <Label kind={statusKinds[indexer.status]}>
-                            {translate(statusLabelKeys[indexer.status])}
-                          </Label>
-                        )}
+                          </span>
+                        ) : null}
                         {indexer.message ? (
                           <div className={styles.message}>
                             {indexer.message}
@@ -318,7 +338,7 @@ function InteractiveSearchStatus({
               {options?.earlySearchReturn &&
               options.searchIndexersInPriorityOrder ? (
                 <p>
-                  {withBold(
+                  {renderBold(
                     translate('InteractiveSearchStatusPriorityOrderNote')
                   )}
                 </p>
@@ -326,7 +346,7 @@ function InteractiveSearchStatus({
 
               {options?.earlySearchReturn ? (
                 <p>
-                  {withBold(
+                  {renderBold(
                     translate('InteractiveSearchStatusEarlySearchReturnNote')
                   )}
                 </p>
@@ -334,7 +354,7 @@ function InteractiveSearchStatus({
 
               {options?.searchResultCacheLifetime ? (
                 <p>
-                  {withBold(
+                  {renderBold(
                     translate('InteractiveSearchStatusCacheNote', {
                       minutes: options.searchResultCacheLifetime,
                     })

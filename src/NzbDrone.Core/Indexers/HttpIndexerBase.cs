@@ -228,6 +228,8 @@ namespace NzbDrone.Core.Indexers
                         {
                             url = request.Url.FullUri;
 
+                            searchCriteria?.IndexerRequestCounts.AddOrUpdate(Definition.Id, 1, (_, count) => count + 1);
+
                             var page = await FetchPage(request, parser);
 
                             pagedReleases.AddRange(page);

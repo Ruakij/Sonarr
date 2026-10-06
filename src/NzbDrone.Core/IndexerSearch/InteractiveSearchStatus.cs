@@ -31,7 +31,10 @@ namespace NzbDrone.Core.IndexerSearch
         // Duration of the single sent query this status belongs to, failed queries included, null for a cached query
         public double? ResponseMs { get; set; }
 
+        // HTTP requests sent to the indexer, pages included
         public int? QueryCount { get; set; }
+
+        // Median duration of the sent queries, each query taking all its pages
         public int? MedianResponseMs { get; set; }
 
         // Successful queries of the indexer across all searches, automatic ones included

@@ -113,6 +113,25 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
         }
 
         [Test]
+        public async Task should_count_sent_requests_to_search_criteria()
+        {
+            var recentFeed = ReadAllText(@"Files/Indexers/Newznab/newznab_nzb_su.xml");
+
+            Mocker.GetMock<IHttpClient>()
+                .Setup(o => o.ExecuteAsync(It.IsAny<HttpRequest>()))
+                .Returns<HttpRequest>(r => Task.FromResult(new HttpResponse(r, new HttpHeader(), recentFeed)));
+
+            var criteria = GetEpisodeCriteria(1);
+
+            await Subject.Fetch(criteria);
+
+            var requestCount = Mocker.GetMock<IHttpClient>().Invocations.Count(i => i.Method.Name == nameof(IHttpClient.ExecuteAsync));
+
+            requestCount.Should().BeGreaterThan(1);
+            criteria.IndexerRequestCounts[5].Should().Be(requestCount);
+        }
+
+        [Test]
         public void should_build_search_query_key_without_credentials_and_with_sorted_params()
         {
             var key = GetSearchQueryKey("secretkey");

@@ -43,3 +43,8 @@
 
   margin-right: 5px;
 }
+
+.age {
+  margin-left: 5px;
+  color: var(--helpTextColor);
+}
