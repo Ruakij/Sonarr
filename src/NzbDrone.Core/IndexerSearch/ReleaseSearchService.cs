@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -39,6 +40,8 @@ namespace NzbDrone.Core.IndexerSearch
 
     public class ReleaseSearchService : ISearchForReleases
     {
+        private const int ResponseTimeHistorySize = 100;
+
         private readonly IIndexerFactory _indexerFactory;
         private readonly ISceneMappingService _sceneMapping;
         private readonly ISeriesService _seriesService;
@@ -49,6 +52,9 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly ICached<CachedSearch> _searchResultCache;
         private readonly ICached<InteractiveSearch> _interactiveSearches;
         private readonly AsyncLocal<CachedSearch> _currentSearch = new AsyncLocal<CachedSearch>();
+
+        // Durations of the last successful queries per indexer, kept in memory only
+        private readonly ConcurrentDictionary<int, Queue<double>> _responseTimeHistory = new ConcurrentDictionary<int, Queue<double>>();
 
         // Searching the remaining indexers of an interactive search queries only these, all at once
         private readonly AsyncLocal<HashSet<int>> _onlyIndexerIds = new AsyncLocal<HashSet<int>>();
@@ -224,6 +230,9 @@ namespace NzbDrone.Core.IndexerSearch
                     // A season searched with several queries shows the worst outcome of the indexer
                     var worst = searches.MaxBy(s => s.Status);
 
+                    var responseTimes = searches.Where(s => s.ResponseMs.HasValue).Select(s => s.ResponseMs.Value).ToList();
+                    var history = GetResponseTimeHistory(definition.Id);
+
                     var status = new IndexerSearchStatus
                     {
                         IndexerId = definition.Id,
@@ -231,12 +240,19 @@ namespace NzbDrone.Core.IndexerSearch
                         Priority = definition.Priority,
                         Status = worst?.Status ?? IndexerSearchStatusType.Skipped,
                         ReleaseCount = searches.Sum(s => s.ReleaseCount),
-                        Message = worst?.Message
+                        Message = worst?.Message,
+                        QueryCount = responseTimes.Any() ? responseTimes.Count : null,
+                        MedianResponseMs = responseTimes.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(responseTimes)) : null,
+                        HistoryCount = history.Any() ? history.Count : null,
+                        HistoryMedianMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(history)) : null,
+                        HistoryLowMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Percentile(history, 2.5)) : null,
+                        HistoryHighMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Percentile(history, 97.5)) : null
                     };
 
                     if (status.Status == IndexerSearchStatusType.Searched && !interactiveSearch.SearchedIndexerIds.Contains(definition.Id))
                     {
                         status.Status = IndexerSearchStatusType.Cached;
+                        status.CachedAt = interactiveSearch.CachedAt;
                     }
 
                     return status;
@@ -1131,26 +1147,26 @@ namespace NzbDrone.Core.IndexerSearch
 
                 if (g >= searchedGroups)
                 {
-                    return GetStatus(indexer, IndexerSearchStatusType.Skipped, reports);
+                    return GetStatus(indexer, IndexerSearchStatusType.Skipped, reports, criteriaBase);
                 }
 
                 if (!answeredIndexerIds.Contains(id))
                 {
-                    return GetStatus(indexer, IndexerSearchStatusType.NotWaitedFor, reports);
+                    return GetStatus(indexer, IndexerSearchStatusType.NotWaitedFor, reports, criteriaBase);
                 }
 
                 if (criteriaBase.IndexerFailures.TryGetValue(id, out var failure))
                 {
                     var timedOut = failure is TaskCanceledException or TimeoutException or WebException { Status: WebExceptionStatus.Timeout };
 
-                    return GetStatus(indexer, timedOut ? IndexerSearchStatusType.TimedOut : IndexerSearchStatusType.Failed, reports, failure.Message);
+                    return GetStatus(indexer, timedOut ? IndexerSearchStatusType.TimedOut : IndexerSearchStatusType.Failed, reports, criteriaBase, failure.Message);
                 }
 
-                return GetStatus(indexer, IndexerSearchStatusType.Searched, reports);
+                return GetStatus(indexer, IndexerSearchStatusType.Searched, reports, criteriaBase);
             })).ToList();
         }
 
-        private static IndexerSearchStatus GetStatus(IIndexer indexer, IndexerSearchStatusType status, List<ReleaseInfo> reports, string message = null)
+        private static IndexerSearchStatus GetStatus(IIndexer indexer, IndexerSearchStatusType status, List<ReleaseInfo> reports, SearchCriteriaBase criteriaBase, string message = null)
         {
             var id = indexer.Definition.Id;
 
@@ -1161,23 +1177,65 @@ namespace NzbDrone.Core.IndexerSearch
                 Priority = ((IndexerDefinition)indexer.Definition).Priority,
                 Status = status,
                 ReleaseCount = reports.Count(r => r.IndexerId == id),
-                Message = message
+                Message = message,
+                ResponseMs = criteriaBase.IndexerResponseTimes.TryGetValue(id, out var responseTime) ? responseTime.TotalMilliseconds : null
             };
         }
 
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
         {
+            var id = indexer.Definition.Id;
+            var stopwatch = Stopwatch.StartNew();
+
             try
             {
                 return await searchAction(indexer);
             }
             catch (Exception ex)
             {
-                criteriaBase.IndexerFailures.TryAdd(indexer.Definition.Id, ex);
+                criteriaBase.IndexerFailures.TryAdd(id, ex);
                 _logger.Error(ex, "Error while searching for {0}", criteriaBase);
+            }
+            finally
+            {
+                criteriaBase.IndexerResponseTimes[id] = stopwatch.Elapsed;
+
+                // Indexers report most failures without throwing, a failed query is no response time of the indexer
+                if (!criteriaBase.IndexerFailures.ContainsKey(id))
+                {
+                    AddResponseTime(id, stopwatch.Elapsed.TotalMilliseconds);
+                }
             }
 
             return Array.Empty<ReleaseInfo>();
+        }
+
+        private void AddResponseTime(int indexerId, double responseMs)
+        {
+            var history = _responseTimeHistory.GetOrAdd(indexerId, _ => new Queue<double>());
+
+            lock (history)
+            {
+                history.Enqueue(responseMs);
+
+                if (history.Count > ResponseTimeHistorySize)
+                {
+                    history.Dequeue();
+                }
+            }
+        }
+
+        private List<double> GetResponseTimeHistory(int indexerId)
+        {
+            if (!_responseTimeHistory.TryGetValue(indexerId, out var history))
+            {
+                return new List<double>();
+            }
+
+            lock (history)
+            {
+                return history.ToList();
+            }
         }
 
         private List<DownloadDecision> DeDupeDecisions(List<DownloadDecision> decisions)
@@ -1201,6 +1259,7 @@ namespace NzbDrone.Core.IndexerSearch
             public CachedSearch Merge(CachedSearch remaining)
             {
                 var merged = new CachedSearch { SearchedAt = SearchedAt, EpisodeIds = EpisodeIds };
+
                 var added = remaining.Searches.ToList();
 
                 foreach (var search in Searches)

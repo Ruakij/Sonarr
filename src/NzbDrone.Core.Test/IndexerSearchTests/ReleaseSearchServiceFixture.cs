@@ -1376,6 +1376,33 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public async Task should_report_response_times_of_interactive_search_and_successful_queries_of_all_searches()
+        {
+            GivenInteractiveSearchStore();
+            GivenIndexersWithPriority((1, 100, "Slow", 10), (1, 0, "Failing", 10));
+            var indexers = Mocker.GetMock<IIndexerFactory>().Object.InteractiveSearchEnabled();
+            Mock.Get(indexers[1]).Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).ThrowsAsync(new Exception("Indexer failed"));
+
+            await Subject.EpisodeSearch(_xemEpisodes.First(), true, false);
+            await InteractiveSearchTitles();
+
+            var status = Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.ToDictionary(i => i.Name);
+
+            status["Slow"].QueryCount.Should().Be(1);
+            status["Slow"].MedianResponseMs.Should().BeGreaterOrEqualTo(90);
+            status["Slow"].HistoryCount.Should().Be(2);
+            status["Slow"].HistoryLowMs.Should().BeInRange(90, status["Slow"].HistoryMedianMs.Value);
+            status["Slow"].HistoryHighMs.Should().BeGreaterOrEqualTo(status["Slow"].HistoryMedianMs.Value);
+
+            status["Failing"].QueryCount.Should().Be(1);
+            status["Failing"].MedianResponseMs.Should().NotBeNull();
+            status["Failing"].HistoryCount.Should().BeNull();
+            status["Failing"].HistoryMedianMs.Should().BeNull();
+
+            ExceptionVerification.ExpectedErrors(2);
+        }
+
+        [Test]
         public async Task should_report_cached_indexers_when_interactive_search_is_served_from_cache()
         {
             GivenInteractiveSearchStore();
@@ -1392,6 +1419,7 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             status.CachedAt.Should().NotBeNull();
             status.Indexers.Select(i => i.Status).Should().AllBeEquivalentTo(IndexerSearchStatusType.Cached);
+            status.Indexers.Select(i => i.CachedAt).Should().AllBeEquivalentTo(status.CachedAt);
         }
 
         [Test]
