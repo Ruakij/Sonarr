@@ -131,6 +131,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EarlySearchReturnMinimumWait", value); }
         }
 
+        public int EarlySearchReturnRequiredPriority
+        {
+            get { return GetValueInt("EarlySearchReturnRequiredPriority", 0); }
+
+            set { SetValue("EarlySearchReturnRequiredPriority", value); }
+        }
+
         public int MinimumAge
         {
             get { return GetValueInt("MinimumAge", 0); }

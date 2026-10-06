@@ -22,6 +22,7 @@ using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
+using NzbDrone.Test.Common;
 
 namespace NzbDrone.Core.Test.IndexerSearchTests
 {
@@ -673,7 +674,9 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var result = indexers.Select((indexer, i) =>
             {
                 var mock = new Mock<IIndexer>();
-                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1 });
+
+                // Indexers with titles starting with "Required" have priority 1, "Failing" in the title makes the indexer fail after its delay
+                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Priority = indexer.Title.StartsWith("Required") ? 1 : IndexerDefinition.DefaultPriority });
 
                 Func<Task<IList<ReleaseInfo>>> fetch = () => indexer.DelayMs == Timeout.Infinite
                     ? _neverAnswers.Task
@@ -726,11 +729,17 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         {
             await Task.Delay(delayMs);
 
+            if (release.Title.Contains("Failing"))
+            {
+                throw new InvalidOperationException("Indexer failed");
+            }
+
             return new List<ReleaseInfo> { release };
         }
 
-        private void GivenEarlySearchReturn(int minimumWait)
+        private void GivenEarlySearchReturn(int minimumWait, int requiredPriority = 0)
         {
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnRequiredPriority).Returns(requiredPriority);
             Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturn).Returns(true);
             Mocker.GetMock<IConfigService>().SetupGet(s => s.EarlySearchReturnMinimumWait).Returns(minimumWait);
 
@@ -871,6 +880,46 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             var titles = await SeasonSearchTitles();
 
             titles.Should().BeEquivalentTo("Episode", "Slow");
+        }
+
+        [Test]
+        public async Task should_not_wait_for_required_priority_indexers_when_required_priority_disabled()
+        {
+            GivenEarlySearchReturn(0);
+            GivenIndexers((0, "Fast", 10), (Timeout.Infinite, "Required", 100));
+
+            var titles = await SearchTitles();
+
+            titles.Should().BeEquivalentTo("Fast");
+        }
+
+        [Test]
+        public async Task should_wait_for_slow_required_priority_indexer_before_returning_early()
+        {
+            GivenEarlySearchReturn(0, 10);
+            GivenIndexers((0, "Fast", 10), (500, "Required", 5), (Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(0.4));
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Fast", "Required");
+        }
+
+        [Test]
+        public async Task should_return_early_once_required_priority_indexer_failed()
+        {
+            GivenEarlySearchReturn(0, 10);
+            GivenIndexers((0, "Fast", 10), (300, "RequiredFailing", 100), (Timeout.Infinite, "Slow", 100));
+
+            var stopwatch = Stopwatch.StartNew();
+            var titles = await SearchTitles();
+
+            stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(0.2));
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            titles.Should().BeEquivalentTo("Fast");
+            ExceptionVerification.ExpectedErrors(1);
         }
     }
 }

@@ -9475,6 +9475,10 @@
           "earlySearchReturnMinimumWait": {
             "type": "integer",
             "format": "int32"
+          },
+          "earlySearchReturnRequiredPriority": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false

@@ -53,6 +53,7 @@ namespace NzbDrone.Core.Configuration
         int MaximumSize { get; set; }
         bool EarlySearchReturn { get; set; }
         int EarlySearchReturnMinimumWait { get; set; }
+        int EarlySearchReturnRequiredPriority { get; set; }
         int MinimumAge { get; set; }
 
         ListSyncLevelType ListSyncLevel { get; set; }

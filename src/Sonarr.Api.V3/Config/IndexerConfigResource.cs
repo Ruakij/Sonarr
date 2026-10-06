@@ -11,6 +11,7 @@ namespace Sonarr.Api.V3.Config
         public int RssSyncInterval { get; set; }
         public bool EarlySearchReturn { get; set; }
         public int EarlySearchReturnMinimumWait { get; set; }
+        public int EarlySearchReturnRequiredPriority { get; set; }
     }
 
     public static class IndexerConfigResourceMapper
@@ -24,7 +25,8 @@ namespace Sonarr.Api.V3.Config
                 MaximumSize = model.MaximumSize,
                 RssSyncInterval = model.RssSyncInterval,
                 EarlySearchReturn = model.EarlySearchReturn,
-                EarlySearchReturnMinimumWait = model.EarlySearchReturnMinimumWait
+                EarlySearchReturnMinimumWait = model.EarlySearchReturnMinimumWait,
+                EarlySearchReturnRequiredPriority = model.EarlySearchReturnRequiredPriority
             };
         }
     }
