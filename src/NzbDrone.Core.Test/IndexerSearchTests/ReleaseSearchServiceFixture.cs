@@ -671,18 +671,34 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             allCriteria.Last().As<SingleEpisodeSearchCriteria>().EpisodeNumber.Should().Be(3);
         }
 
+        // Indexers with titles starting with "Required" have priority 1, "Failing" in the title makes the indexer fail after its delay
         private void GivenIndexers(params (int DelayMs, string Title, int Score)[] indexers)
         {
+            GivenIndexersWithPriority(indexers.Select(i => (i.Title.StartsWith("Required") ? 1 : IndexerDefinition.DefaultPriority, i.DelayMs, i.Title, i.Score)).ToArray());
+        }
+
+        // Returns the titles of the indexers that were queried
+        private List<string> GivenIndexersWithPriority(params (int Priority, int DelayMs, string Title, int Score)[] indexers)
+        {
+            var fetched = new List<string>();
+
             var result = indexers.Select((indexer, i) =>
             {
                 var mock = new Mock<IIndexer>();
 
-                // Indexers with titles starting with "Required" have priority 1, "Failing" in the title makes the indexer fail after its delay
-                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Priority = indexer.Title.StartsWith("Required") ? 1 : IndexerDefinition.DefaultPriority });
+                mock.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = i + 1, Priority = indexer.Priority });
 
-                Func<Task<IList<ReleaseInfo>>> fetch = () => indexer.DelayMs == Timeout.Infinite
-                    ? _neverAnswers.Task
-                    : FetchDelayed(indexer.DelayMs, new ReleaseInfo { IndexerId = i + 1, Title = indexer.Title, Guid = indexer.Title, Size = indexer.Score });
+                Func<Task<IList<ReleaseInfo>>> fetch = () =>
+                {
+                    lock (fetched)
+                    {
+                        fetched.Add(indexer.Title);
+                    }
+
+                    return indexer.DelayMs == Timeout.Infinite
+                        ? _neverAnswers.Task
+                        : FetchDelayed(indexer.DelayMs, new ReleaseInfo { IndexerId = i + 1, Title = indexer.Title, Guid = indexer.Title, Size = indexer.Score });
+                };
 
                 mock.Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>())).Returns(fetch);
                 mock.Setup(s => s.Fetch(It.IsAny<SeasonSearchCriteria>())).Returns(fetch);
@@ -705,6 +721,8 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
             Mocker.GetMock<IMakeDownloadDecision>()
                 .Setup(s => s.GetSearchDecision(It.IsAny<List<ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>(), It.IsAny<bool>()))
                 .Returns<List<ReleaseInfo>, SearchCriteriaBase, bool>((reports, criteria, reportProgress) => Decide(reports, criteria));
+
+            return fetched;
         }
 
         // Releases with a Size of at least 10 meet the cutoff, titles starting with "Rejected" are rejected and titles starting with "Episode" cover only the first searched episode
@@ -1126,6 +1144,125 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
 
             maxRunning.Should().Be(3);
             episodeSearches.Should().HaveCount(12);
+        }
+
+        private void GivenSearchIndexersInPriorityOrder()
+        {
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchIndexersInPriorityOrder).Returns(true);
+        }
+
+        [Test]
+        public async Task should_search_all_indexers_at_once_when_priority_order_disabled()
+        {
+            GivenEarlySearchReturn(0);
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await SearchTitles();
+
+            fetched.Should().BeEquivalentTo("First", "Second");
+        }
+
+        [Test]
+        public async Task should_ignore_priority_order_when_early_search_return_disabled()
+        {
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            var titles = await SearchTitles();
+
+            fetched.Should().BeEquivalentTo("First", "Second");
+            titles.Should().BeEquivalentTo("First", "Second");
+        }
+
+        [Test]
+        public async Task should_stop_after_first_priority_group_with_good_enough_release()
+        {
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (1, 100, "Other", 5), (2, 0, "Second", 10));
+
+            var titles = await SearchTitles();
+
+            fetched.Should().BeEquivalentTo("First", "Other");
+            titles.Should().Contain("First").And.NotContain("Second");
+        }
+
+        [Test]
+        public async Task should_continue_with_next_priority_group_when_nothing_good_enough_found()
+        {
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 5), (2, 0, "Rejected", 10), (3, 0, "Third", 10), (4, 0, "Fourth", 10));
+
+            var titles = await SearchTitles();
+
+            fetched.Should().Equal("First", "Rejected", "Third");
+            titles.Should().BeEquivalentTo("First", "Rejected", "Third");
+        }
+
+        [Test]
+        public async Task should_search_indexers_up_to_required_priority_as_first_group()
+        {
+            GivenEarlySearchReturn(0, 2);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (2, 200, "Second", 5), (3, 0, "Third", 10));
+
+            var titles = await SearchTitles();
+
+            fetched.Should().BeEquivalentTo("First", "Second");
+            titles.Should().BeEquivalentTo("First", "Second");
+        }
+
+        [Test]
+        public async Task should_search_in_priority_order_for_interactive_search()
+        {
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            var fetched = GivenIndexersWithPriority((1, 0, "First", 10), (1, 200, "Other", 5), (2, 0, "Second", 10));
+
+            var titles = await SearchTitles(true);
+
+            fetched.Should().BeEquivalentTo("First", "Other");
+            titles.Should().BeEquivalentTo("First", "Other");
+        }
+
+        [TestCase(10, new[] { "First" })]
+        [TestCase(5, new[] { "First", "Second" })]
+        public async Task should_serve_priority_order_search_to_interactive_search(int firstScore, string[] titles)
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            GivenIndexersWithPriority((1, 0, "First", firstScore), (2, 0, "Second", 10));
+
+            await SearchTitles();
+
+            Mocker.GetMock<IEpisodeService>()
+                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
+                  .Returns(_xemEpisodes.First());
+
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Decisions.Select(d => d.RemoteEpisode.Release.Title).Should().BeEquivalentTo(titles);
+        }
+
+        [Test]
+        public async Task should_not_serve_priority_order_search_to_interactive_search_when_first_group_was_cut_short()
+        {
+            Mocker.SetConstant<ICacheManager>(Mocker.Resolve<CacheManager>());
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            GivenIndexersWithPriority((1, 0, "First", 10), (1, Timeout.Infinite, "Slow", 10), (2, 0, "Second", 10));
+
+            await SearchTitles();
+
+            Mocker.GetMock<IEpisodeService>()
+                  .Setup(s => s.GetEpisode(_xemEpisodes.First().Id))
+                  .Returns(_xemEpisodes.First());
+
+            Subject.CachedEpisodeSearch(_xemEpisodes.First().Id, true).Should().BeNull();
         }
 
         private static int InterlockedMax(ref int target, int value)
