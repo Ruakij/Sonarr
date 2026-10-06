@@ -136,7 +136,7 @@ namespace NzbDrone.Core.Test.IndexerTests.NewznabTests
         {
             var key = GetSearchQueryKey("secretkey");
 
-            key.Should().StartWith("GET http://indexer.local/api?");
+            key.Should().StartWith("GET http://indexer.local:/api?");
             key.Should().NotContain("secretkey").And.NotContain("apikey");
             key.Should().Be(GetSearchQueryKey("otherkey"));
             key.Should().NotBe(GetSearchQueryKey("secretkey", 2));
