@@ -187,9 +187,7 @@ namespace NzbDrone.Core.Indexers
                 body = body.Replace("\"" + credential + "\"", "\"\"");
             }
 
-            var port = url.Port.HasValue ? $":{url.Port}" : string.Empty;
-
-            return $"{request.Method} {url.Scheme}://{url.Host}{port}{url.Path}?{string.Join("&", query)} {body}".TrimEnd();
+            return $"{request.Method} {url.Scheme}://{url.Host}:{url.Port}{url.Path}?{string.Join("&", query)} {body}".TrimEnd();
         }
 
         public override HttpRequest GetDownloadRequest(string link)
