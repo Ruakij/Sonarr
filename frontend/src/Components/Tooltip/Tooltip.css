@@ -29,10 +29,6 @@
   border-color: transparent;
 }
 
-.arrowDisabled {
-  display: none;
-}
-
 .arrow::after {
   border-width: 10px;
   content: '';
