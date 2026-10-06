@@ -378,6 +378,9 @@ namespace NzbDrone.Core.IndexerSearch
 
             var lifetime = _configService.SearchResultCacheLifetime;
 
+            // A merged entry expires with the search it adds to
+            var expiresIn = previous == null ? TimeSpan.FromMinutes(lifetime) : previous.SearchedAt.AddMinutes(lifetime) - DateTime.UtcNow;
+
             if (lifetime <= 0)
             {
                 _searchResultCache.Clear();
@@ -388,9 +391,13 @@ namespace NzbDrone.Core.IndexerSearch
                 _searchResultCache.ClearExpired();
 
                 // Without an answer of any indexer there is nothing to serve, the next search has to ask the indexers again
-                if (entry.HasAnswers)
+                if (entry.HasAnswers && expiresIn > TimeSpan.Zero)
                 {
-                    _searchResultCache.Set(key, entry, TimeSpan.FromMinutes(lifetime));
+                    _searchResultCache.Set(key, entry, expiresIn);
+                }
+                else if (expiresIn <= TimeSpan.Zero)
+                {
+                    _searchResultCache.Remove(key);
                 }
             }
 

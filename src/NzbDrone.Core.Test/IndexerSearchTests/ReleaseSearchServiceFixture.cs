@@ -1379,6 +1379,25 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public async Task should_not_extend_cache_lifetime_when_searching_remaining()
+        {
+            GivenInteractiveSearchStore();
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.SearchResultCacheLifetime).Returns(60);
+            GivenEarlySearchReturn(0);
+            GivenSearchIndexersInPriorityOrder();
+            GivenIndexersWithPriority((1, 0, "First", 10), (2, 0, "Second", 10));
+
+            await InteractiveSearchTitles();
+
+            var cache = Mocker.Resolve<ICacheManager>().GetCache<ReleaseSearchService.CachedSearch>(typeof(ReleaseSearchService), "searchResults");
+            cache.Find("episode:1").SearchedAt = DateTime.UtcNow.AddMinutes(-61);
+
+            (await InteractiveSearchTitles(searchRemaining: true)).Should().BeEquivalentTo("First", "Second");
+
+            cache.Find("episode:1").Should().BeNull();
+        }
+
+        [Test]
         public async Task should_search_all_indexers_again_on_refresh()
         {
             GivenInteractiveSearchStore();
