@@ -14,6 +14,14 @@ namespace NzbDrone.Common.Disk
     {
         private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(DiskProviderBase));
 
+        // Listing the mounts stats every mount, which is slow with many network and FUSE mounts. The free space is read
+        // from the mount when asked for, so a cached list still reports current free space.
+        private readonly object _mountsLock = new ();
+        private List<IMount> _mounts;
+        private DateTime _mountsExpire;
+
+        protected virtual TimeSpan MountCacheLifetime => TimeSpan.FromSeconds(30);
+
         public static StringComparison PathStringComparison
         {
             get
@@ -464,7 +472,21 @@ namespace NzbDrone.Common.Disk
 
         public List<IMount> GetMounts()
         {
-            return GetAllMounts().Where(d => !IsSpecialMount(d)).ToList();
+            return GetCachedMounts().Where(d => !IsSpecialMount(d)).ToList();
+        }
+
+        private List<IMount> GetCachedMounts()
+        {
+            lock (_mountsLock)
+            {
+                if (_mounts == null || DateTime.UtcNow >= _mountsExpire)
+                {
+                    _mounts = GetAllMounts();
+                    _mountsExpire = DateTime.UtcNow + MountCacheLifetime;
+                }
+
+                return _mounts;
+            }
         }
 
         protected virtual List<IMount> GetAllMounts()
@@ -484,7 +506,7 @@ namespace NzbDrone.Common.Disk
         {
             try
             {
-                var mounts = GetAllMounts();
+                var mounts = GetCachedMounts();
 
                 return mounts.Where(drive => drive.RootDirectory.PathEquals(path) ||
                                              drive.RootDirectory.IsParentPath(path))
