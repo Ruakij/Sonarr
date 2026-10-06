@@ -34,16 +34,18 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             var size = subject.Release.Size;
             var path = subject.Series.Path;
-            long? freeSpace = null;
-
-            try
+            var freeSpace = DecisionRunCache.GetOrAdd<long?>("FreeSpace", path, () =>
             {
-                freeSpace = _diskProvider.GetAvailableSpace(path);
-            }
-            catch (DirectoryNotFoundException)
-            {
-                // Ignore so it'll be skipped in the following checks
-            }
+                try
+                {
+                    return _diskProvider.GetAvailableSpace(path);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    // Ignore so it'll be skipped in the following checks
+                    return null;
+                }
+            });
 
             if (!freeSpace.HasValue)
             {
