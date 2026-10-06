@@ -1430,6 +1430,26 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public async Task should_count_http_requests_of_sent_queries()
+        {
+            GivenInteractiveSearchStore();
+            GivenIndexersWithPriority((1, 0, "Paged", 10));
+            var indexer = Mocker.GetMock<IIndexerFactory>().Object.InteractiveSearchEnabled().Single();
+
+            Mock.Get(indexer).Setup(s => s.Fetch(It.IsAny<SingleEpisodeSearchCriteria>()))
+                .Returns<SingleEpisodeSearchCriteria>(c =>
+                {
+                    c.IndexerRequestCounts[1] = 3;
+
+                    return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+                });
+
+            await InteractiveSearchTitles();
+
+            Subject.InteractiveEpisodeSearchStatus(_xemEpisodes.First().Id).Indexers.Single().QueryCount.Should().Be(3);
+        }
+
+        [Test]
         public async Task should_report_cached_indexers_when_interactive_search_is_served_from_cache()
         {
             GivenInteractiveSearchStore();

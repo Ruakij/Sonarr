@@ -212,7 +212,7 @@ namespace NzbDrone.Core.IndexerSearch
                         ReleaseCount = queries.Sum(s => s.ReleaseCount),
                         Message = worst?.Message,
                         CachedAt = queries.Where(s => s.Status == IndexerSearchStatusType.Cached).Min(s => s.CachedAt),
-                        QueryCount = responseTimes.Any() ? responseTimes.Count : null,
+                        QueryCount = responseTimes.Any() ? queries.Sum(s => s.QueryCount ?? 0) : null,
                         MedianResponseMs = responseTimes.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(responseTimes)) : null,
                         HistoryCount = history.Any() ? history.Count : null,
                         HistoryMedianMs = history.Any() ? (int)Math.Round(ResponseTimeStatistics.Median(history)) : null,
@@ -1164,6 +1164,9 @@ namespace NzbDrone.Core.IndexerSearch
                 ReleaseCount = reports.Count(r => r.IndexerId == id),
                 Message = message,
                 ResponseMs = responseMs,
+
+                // Indexers that send no HTTP requests of their own count as one request per query
+                QueryCount = responseMs.HasValue ? criteriaBase.IndexerRequestCounts.GetValueOrDefault(id, 1) : null,
                 CachedAt = cachedAt
             };
         }
