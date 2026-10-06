@@ -30,8 +30,6 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> EpisodeSearch(Episode episode, bool userInvokedSearch, bool interactiveSearch, bool useCache = true);
         Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, bool missingOnly, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true);
         Task<List<DownloadDecision>> SeasonSearch(int seriesId, int seasonNumber, List<Episode> episodes, bool monitoredOnly, bool userInvokedSearch, bool interactiveSearch, bool useCache = true);
-        CachedSearchResult CachedEpisodeSearch(int episodeId);
-        CachedSearchResult CachedSeasonSearch(int seriesId, int seasonNumber);
         Task<CachedSearchResult> InteractiveEpisodeSearch(int episodeId, bool refresh, bool searchRemaining);
         Task<CachedSearchResult> InteractiveSeasonSearch(int seriesId, int seasonNumber, bool refresh, bool searchRemaining);
         InteractiveSearchStatus InteractiveEpisodeSearchStatus(int episodeId);
@@ -225,42 +223,6 @@ namespace NzbDrone.Core.IndexerSearch
                 .ToList();
 
             return new InteractiveSearchStatus { CachedAt = statuses.Min(s => s.CachedAt), Indexers = statuses };
-        }
-
-        public CachedSearchResult CachedEpisodeSearch(int episodeId)
-        {
-            var episode = _episodeService.GetEpisode(episodeId);
-
-            return CachedSearch(() => SearchEpisode(episode, false, false));
-        }
-
-        public CachedSearchResult CachedSeasonSearch(int seriesId, int seasonNumber)
-        {
-            var episodes = _episodeService.GetEpisodesBySeason(seriesId, seasonNumber);
-
-            return CachedSearch(() => SearchSeason(seriesId, seasonNumber, episodes, true, false, false));
-        }
-
-        // Decides on the cached queries of the search without sending the others, null when none of its queries is cached
-        private CachedSearchResult CachedSearch(Func<Task<List<DownloadDecision>>> search)
-        {
-            if (_configService.SearchResultCacheLifetime <= 0)
-            {
-                return null;
-            }
-
-            // Nothing is sent, so the search completes without waiting on an indexer
-            var run = Run(search, CacheMode.Only).GetAwaiter().GetResult();
-            var cachedAt = OldestCachedAt(run.Searches);
-
-            if (cachedAt == null)
-            {
-                return null;
-            }
-
-            _logger.ProgressInfo("Using {0} cached search results from {1}", run.Decisions.Count, cachedAt.Value.ToLocalTime());
-
-            return new CachedSearchResult(run.Decisions, cachedAt);
         }
 
         private static string EpisodeCacheKey(int episodeId) => $"episode:{episodeId}";
@@ -885,9 +847,7 @@ namespace NzbDrone.Core.IndexerSearch
                           .Where(q => q.Query != null)
                           .ToDictionary(q => q.Id, q => q.Query);
 
-            var indexerIdsToSearch = cacheMode == CacheMode.Only
-                ? new HashSet<int>()
-                : indexers.Select(i => i.Definition.Id).Where(id => !cachedQueries.ContainsKey(id)).ToHashSet();
+            var indexerIdsToSearch = indexers.Select(i => i.Definition.Id).Where(id => !cachedQueries.ContainsKey(id)).ToHashSet();
 
             var decisions = new List<DownloadDecision>();
             var reports = new List<ReleaseInfo>();
@@ -1250,10 +1210,7 @@ namespace NzbDrone.Core.IndexerSearch
             Use,
 
             // Every query is sent, the answers replace the cached ones
-            Refresh,
-
-            // Cached queries are taken, nothing is sent
-            Only
+            Refresh
         }
 
         internal class SearchRun

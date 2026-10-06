@@ -153,65 +153,10 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
 
-            // Cached releases are grabbed while going through the episodes, so only searches without them run in parallel.
             // Searches started by hand query the indexers, their results still refresh the cache
-            if (!message.FallbackToIndexers)
-            {
-                var grabbed = SearchAndProcess(message.EpisodeIds, _configService.SearchConcurrency, _processDownloadDecisions, episodeId => _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
+            var grabbed = SearchAndProcess(message.EpisodeIds, _configService.SearchConcurrency, _processDownloadDecisions, episodeId => _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, !userInvokedSearch)).GetAwaiter().GetResult();
 
-                _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", grabbed);
-
-                return;
-            }
-
-            var grabbedEpisodeIds = new HashSet<int>();
-
-            foreach (var episodeId in message.EpisodeIds)
-            {
-                if (grabbedEpisodeIds.Contains(episodeId))
-                {
-                    continue;
-                }
-
-                if (GrabCachedRelease(() => _releaseSearchService.CachedEpisodeSearch(episodeId), _processDownloadDecisions, _logger, $"episode [{episodeId}]", grabbedEpisodeIds))
-                {
-                    continue;
-                }
-
-                var decisions = _releaseSearchService.EpisodeSearch(episodeId, userInvokedSearch, false, false).GetAwaiter().GetResult();
-                var processed = ProcessNotGrabbed(_processDownloadDecisions, decisions, grabbedEpisodeIds).GetAwaiter().GetResult();
-
-                _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
-            }
-        }
-
-        internal static bool GrabCachedRelease(Func<CachedSearchResult> cachedSearch, IProcessDownloadDecisions processDownloadDecisions, Logger logger, string item, HashSet<int> grabbedEpisodeIds = null)
-        {
-            try
-            {
-                var decisions = cachedSearch()?.Decisions;
-
-                if (decisions == null || decisions.Empty())
-                {
-                    return false;
-                }
-
-                var processed = ProcessNotGrabbed(processDownloadDecisions, decisions, grabbedEpisodeIds ?? new HashSet<int>()).GetAwaiter().GetResult();
-
-                if (processed.Grabbed.Any() || processed.Pending.Any())
-                {
-                    logger.ProgressInfo("Used cached search results for {0}. {1} reports downloaded.", item, processed.Grabbed.Count);
-                    return true;
-                }
-
-                logger.Debug("No cached search result for {0} is acceptable anymore, searching indexers", item);
-            }
-            catch (Exception ex)
-            {
-                logger.Warn(ex, "Unable to grab cached search result for {0}, searching indexers", item);
-            }
-
-            return false;
+            _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", grabbed);
         }
 
         public void Execute(MissingEpisodeSearchCommand message)
