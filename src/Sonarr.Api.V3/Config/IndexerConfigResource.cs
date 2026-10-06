@@ -12,6 +12,7 @@ namespace Sonarr.Api.V3.Config
         public bool EarlySearchReturn { get; set; }
         public int EarlySearchReturnMinimumWait { get; set; }
         public int EarlySearchReturnRequiredPriority { get; set; }
+        public bool SearchIndexersInPriorityOrder { get; set; }
         public int SearchConcurrency { get; set; }
         public int SearchResultCacheLifetime { get; set; }
     }
@@ -29,6 +30,7 @@ namespace Sonarr.Api.V3.Config
                 EarlySearchReturn = model.EarlySearchReturn,
                 EarlySearchReturnMinimumWait = model.EarlySearchReturnMinimumWait,
                 EarlySearchReturnRequiredPriority = model.EarlySearchReturnRequiredPriority,
+                SearchIndexersInPriorityOrder = model.SearchIndexersInPriorityOrder,
                 SearchConcurrency = model.SearchConcurrency,
                 SearchResultCacheLifetime = model.SearchResultCacheLifetime
             };

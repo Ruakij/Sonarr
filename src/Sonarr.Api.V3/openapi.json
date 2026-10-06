@@ -9492,6 +9492,9 @@
             "type": "integer",
             "format": "int32"
           },
+          "searchIndexersInPriorityOrder": {
+            "type": "boolean"
+          },
           "searchConcurrency": {
             "type": "integer",
             "format": "int32"

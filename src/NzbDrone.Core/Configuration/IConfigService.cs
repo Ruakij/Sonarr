@@ -56,6 +56,7 @@ namespace NzbDrone.Core.Configuration
         bool EarlySearchReturn { get; set; }
         int EarlySearchReturnMinimumWait { get; set; }
         int EarlySearchReturnRequiredPriority { get; set; }
+        bool SearchIndexersInPriorityOrder { get; set; }
         int SearchConcurrency { get; set; }
         int SearchResultCacheLifetime { get; set; }
         int MinimumAge { get; set; }

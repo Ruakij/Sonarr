@@ -165,24 +165,50 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var indexerIds = GetIndexers(criteria).Select(i => i.Definition.Id).ToHashSet();
+                var indexers = GetIndexers(criteria);
+                var indexerIds = indexers.Select(i => i.Definition.Id).ToHashSet();
+                var releases = search.Reports.Where(r => indexerIds.Contains(r.IndexerId)).ToList();
+                var searchDecisions = _makeDownloadDecision.GetSearchDecision(releases, criteria);
 
-                // Interactive search shows everything its indexers return, so it is only served by a search that got an answer from all of them
-                if (interactiveSearch && !indexerIds.IsSubsetOf(search.IndexerIds))
+                // Interactive search shows everything its indexers return, so it is only served by a search that got an answer from all indexers it would search
+                if (interactiveSearch && !IsCompleteSearch(indexers, search.IndexerIds, searchDecisions, criteria))
                 {
                     _logger.Debug("Cached search results for {0} are missing results of some indexers, searching indexers", criteria);
                     return null;
                 }
 
-                var releases = search.Reports.Where(r => indexerIds.Contains(r.IndexerId)).ToList();
                 releaseCount += releases.Count;
 
-                decisions.AddRange(_makeDownloadDecision.GetSearchDecision(releases, criteria));
+                decisions.AddRange(searchDecisions);
             }
 
             _logger.ProgressInfo("Using {0} search results for {1} cached at {2}", releaseCount, series.Title, entry.SearchedAt.ToLocalTime());
 
             return new CachedSearchResult(DeDupeDecisions(decisions), entry.SearchedAt);
+        }
+
+        // Complete means every indexer group was answered up to the one that found a good enough release, like a search in priority order would have searched them
+        private bool IsCompleteSearch(List<IIndexer> indexers, HashSet<int> answeredIndexerIds, List<DownloadDecision> decisions, SearchCriteriaBase criteria)
+        {
+            var groups = GetIndexerGroups(indexers);
+            var searchedIndexerIds = new HashSet<int>();
+
+            for (var i = 0; i < groups.Count; i++)
+            {
+                if (groups[i].Any(indexer => !answeredIndexerIds.Contains(indexer.Definition.Id)))
+                {
+                    return false;
+                }
+
+                searchedIndexerIds.UnionWith(groups[i].Select(indexer => indexer.Definition.Id));
+
+                if (i < groups.Count - 1 && decisions.Any(d => searchedIndexerIds.Contains(d.RemoteEpisode.Release.IndexerId) && IsGoodEnough(d, criteria.Episodes)))
+                {
+                    return true;
+                }
+            }
+
+            return true;
         }
 
         private async Task<List<DownloadDecision>> SearchAndCache(string key, List<Episode> episodes, Func<Task<List<DownloadDecision>>> search)
@@ -693,22 +719,36 @@ namespace NzbDrone.Core.IndexerSearch
             {
                 _logger.ProgressInfo("Searching indexers for {0}. {1} active indexers", criteriaBase, indexers.Count);
 
-                var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
+                decisions = new List<DownloadDecision>();
 
-                if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
+                var groups = GetIndexerGroups(indexers);
+
+                for (var i = 0; i < groups.Count; i++)
                 {
-                    decisions = await CollectDecisionsWithEarlyReturn(indexers, tasks, criteriaBase, reports, answeredIndexerIds);
-                }
-                else
-                {
-                    var batch = await Task.WhenAll(tasks);
+                    var group = groups[i];
+                    var tasks = group.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase)).ToList();
 
-                    reports.AddRange(batch.SelectMany(x => x));
-                    answeredIndexerIds.UnionWith(indexers.Select(i => i.Definition.Id));
+                    if (_configService.EarlySearchReturn && !criteriaBase.InteractiveSearch)
+                    {
+                        decisions.AddRange(await CollectDecisionsWithEarlyReturn(group, tasks, criteriaBase, reports, answeredIndexerIds));
+                    }
+                    else
+                    {
+                        var groupReports = (await Task.WhenAll(tasks)).SelectMany(x => x).ToList();
 
-                    _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
+                        reports.AddRange(groupReports);
+                        answeredIndexerIds.UnionWith(group.Select(indexer => indexer.Definition.Id));
 
-                    decisions = _makeDownloadDecision.GetSearchDecision(reports, criteriaBase);
+                        _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", groupReports.Count, criteriaBase, group.Count);
+
+                        decisions.AddRange(_makeDownloadDecision.GetSearchDecision(groupReports, criteriaBase));
+                    }
+
+                    if (i < groups.Count - 1 && decisions.Any(d => IsGoodEnough(d, criteriaBase.Episodes)))
+                    {
+                        _logger.ProgressInfo("Found a good enough release for {0}, skipping {1} indexers of lower priority", criteriaBase, groups.Skip(i + 1).Sum(g => g.Count));
+                        break;
+                    }
                 }
             }
             finally
@@ -818,6 +858,23 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             return decisions;
+        }
+
+        // Search Indexers in Priority Order searches indexers of equal priority together, best priority first.
+        // Indexers the early return always waits for share the first group, without the setting all indexers are one group
+        private List<List<IIndexer>> GetIndexerGroups(List<IIndexer> indexers)
+        {
+            if (!_configService.EarlySearchReturn || !_configService.SearchIndexersInPriorityOrder)
+            {
+                return new List<List<IIndexer>> { indexers };
+            }
+
+            var requiredPriority = _configService.EarlySearchReturnRequiredPriority;
+
+            return indexers.GroupBy(i => Math.Max(((IndexerDefinition)i.Definition).Priority, requiredPriority))
+                           .OrderBy(g => g.Key)
+                           .Select(g => g.ToList())
+                           .ToList();
         }
 
         // Good enough means the searched episodes would not be upgraded from this release anymore.
